@@ -1,0 +1,68 @@
+deployment:
+  replicaCount: 1
+  image:
+    pullPolicy: IfNotPresent
+  securityContext:
+    runAsUser: 2000
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+host: "kyma-env-broker"
+manageSecrets: true
+
+broker:
+  port: "8080"
+  username: "broker"
+  # password can be set manually by user. If empty then it will be randomized.
+  password: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+provisioner:
+  URL: "http://compass-provisioner.compass-system.svc.cluster.local:3000/graphql"
+  gardener:
+    # name of the secret with kubeconfig to the gardener cluster
+    secretName: "gardener"
+    # name of the gardener project
+    projectName: "gopher"
+
+additionalRuntimeComponents:
+  - name: "service-manager-proxy"
+    namespace: "kyma-system"
+  - name: "uaa-activator"
+    namespace: "kyma-system"
+  - name: "compass-runtime-agent"
+    namespace: "compass-system"
+
+kymaVersion: "1.10.0"
+
+enablePlans: "azure,gcp"
+
+gardener:
+  project: "kyma-dev" # Gardener project connected to SA for HAP credentials lookup
+  kubeconfigPath: "/gardener/kubeconfig/kubeconfig"
+  secretName: "gardener-credentials"
+
+# It is used to provide own creds for Service Manager instead of using the one provided by external system
+# who execute provision call on Kyma Environment Broker. You can define `overrideMode` to be one of: Always, WhenNotSentInRequest, Never
+serviceManager:
+  overrideMode: "Never" # possible values: Always, WhenNotSentInRequest, Never
+  secretName: "service-manager-creds"
+  url: "TBD"
+  username: "TBD"
+  password: "TBD"

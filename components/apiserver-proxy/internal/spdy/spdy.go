@@ -4,7 +4,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
+	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/monitoring"
+	sanitizer "github.com/microcosm-cc/bluemonday"
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	"k8s.io/client-go/rest"
@@ -14,10 +17,11 @@ import (
 type Proxy struct {
 	kubeconfig  *rest.Config
 	upstreamUrl *url.URL
+	metrics     *monitoring.SPDYMetrics
 }
 
-func New(kubeconfig *rest.Config, upstreamUrl *url.URL) *Proxy {
-	return &Proxy{kubeconfig: kubeconfig, upstreamUrl: upstreamUrl}
+func New(kubeconfig *rest.Config, upstreamUrl *url.URL, metrics *monitoring.SPDYMetrics) *Proxy {
+	return &Proxy{kubeconfig: kubeconfig, upstreamUrl: upstreamUrl, metrics: metrics}
 }
 
 func (p *Proxy) IsSpdyRequest(req *http.Request) bool {
@@ -25,6 +29,8 @@ func (p *Proxy) IsSpdyRequest(req *http.Request) bool {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	spdyNegStart := time.Now()
+
 	clientTransport, upgrader, err := client_spdy.RoundTripperFor(p.kubeconfig)
 	if err != nil {
 		panic(err)
@@ -32,11 +38,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	client := &http.Client{Transport: clientTransport}
 
-	protocols := req.Header.Get("X-Stream-Protocol-Version")
+	headers := req.Header.Get("X-Stream-Protocol-Version")
+
+	policy := sanitizer.StrictPolicy()
+	protocols := policy.Sanitize(headers)
+
 	clientUrl, _ := url.Parse(p.upstreamUrl.String())
 	clientUrl.Path = req.URL.Path
 	clientUrl.RawQuery = req.URL.RawQuery
-	clientReq, err := http.NewRequest(req.Method, clientUrl.String(), req.Body)
+
+	method := policy.Sanitize(req.Method)
+	body := policy.SanitizeReader(req.Body)
+
+	clientReq, err := http.NewRequest(method, clientUrl.String(), body)
 	if err != nil {
 		panic(err)
 	}
@@ -45,6 +59,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	clientReq.Header.Set("connection", "upgrade")
 
 	serverConnection, s, err := client_spdy.Negotiate(upgrader, client, clientReq, protocols)
+	p.metrics.NegotiationDurations.Observe(time.Since(spdyNegStart).Seconds())
 	if err != nil {
 		panic(err)
 	}

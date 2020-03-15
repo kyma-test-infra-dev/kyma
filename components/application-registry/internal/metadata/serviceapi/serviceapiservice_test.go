@@ -1,8 +1,9 @@
 package serviceapi
 
 import (
-	"k8s.io/apimachinery/pkg/types"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/kyma-project/kyma/components/application-registry/internal/apperrors"
 	k8smocks "github.com/kyma-project/kyma/components/application-registry/internal/k8sconsts/mocks"
@@ -554,7 +555,7 @@ func TestDefaultService_Read(t *testing.T) {
 		secretsService := new(secretsmocks.Service)
 
 		requestParamsService := new(secretsmocks.RequestParametersService)
-		requestParamsService.On("Get", requestParamsSecretName).Return(*requestParams, nil)
+		requestParamsService.On("Get", requestParamsSecretName).Return(requestParams, nil)
 
 		service := NewService(nil, nil, secretsService, requestParamsService, nil)
 

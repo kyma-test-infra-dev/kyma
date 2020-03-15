@@ -35,9 +35,7 @@ data:
   global.isLocalEnv: "true"
   global.domainName: "kyma.local"
   global.adminPassword: ""
-  nginx-ingress.controller.service.loadBalancerIP: ""
-  global.serviceCatalogApiserver.enabled: "true"
-  global.serviceCatalogCrds.enabled: "false"
+  global.minikubeIP: ""
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -49,10 +47,6 @@ metadata:
     component: istio
     kyma-project.io/installation: ""
 data:
-  gateways.istio-ingressgateway.loadBalancerIP: ""
-  gateways.istio-ingressgateway.type: "NodePort"
-  gateways.istio-ingressgateway.autoscaleEnabled: "false"
-
   pilot.resources.limits.memory: 1024Mi
   pilot.resources.limits.cpu: 500m
   pilot.resources.requests.memory: 512Mi
@@ -101,73 +95,88 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: knative-serving-overrides
+  name: dex-overrides
   namespace: kyma-installer
   labels:
     installer: overrides
-    component: knative-serving
+    component: dex
     kyma-project.io/installation: ""
 data:
-  knative-serving.domainName: "kyma.local"
+  telemetry.enabled: "false"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: assetstore-overrides
-  namespace: kyma-installer
-  labels:
-    installer: overrides
-    component: assetstore
-    kyma-project.io/installation: ""
-data:
-  asset-store-controller-manager.resources.limits.cpu: 100m
-  asset-store-controller-manager.resources.limits.memory: 128Mi
-  asset-store-controller-manager.resources.requests.cpu: 100m
-  asset-store-controller-manager.resources.requests.memory: 64Mi
-  asset-store-controller-manager.maxAssetConcurrentReconciles: "1"
-  asset-store-controller-manager.maxClusterAssetConcurrentReconciles: "1"
-  asset-store-controller-manager.minikubeIP: ""
-  test.integration.minikubeIP: ""
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: core-overrides
-  namespace: kyma-installer
-  labels:
-    installer: overrides
-    component: core
-    kyma-project.io/installation: ""
-data:
-  test.acceptance.ui.minikubeIP: ""
-  test.acceptance.ui.logging.enabled: ""
-  test.acceptance.cbs.minikubeIP: ""
-  apiserver-proxy.minikubeIP: ""
-  iam-kubeconfig-service.minikubeIP: ""
-  console-backend-service.minikubeIP: ""
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: application-connector-overrides
+  name: application-connector-tests
   namespace: kyma-installer
   labels:
     installer: overrides
     component: application-connector
     kyma-project.io/installation: ""
 data:
-   application-registry.minikubeIP: ""
-   tests.application_connector_tests.minikubeIP: ""
+  application-operator.tests.enabled: "false"
+  application-registry.tests.enabled: "false"
+  connector-service.tests.enabled: "false"
+  tests.application_connector_tests.enabled: "false"
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: intallation-logging-overrides
+  name: compass-runtime-agent-tests
   namespace: kyma-installer
   labels:
     installer: overrides
-    component: logging
+    component: compass-runtime-agent
     kyma-project.io/installation: ""
 data:
-  global.logging.promtail.config.name: ""
-
+  compassRuntimeAgent.tests.enabled: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: core-tests
+  namespace: kyma-installer
+  labels:
+    installer: overrides
+    component: core
+    kyma-project.io/installation: ""
+data:
+  kubeless.tests.enabled: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ory-overrides
+  namespace: kyma-installer
+  labels:
+    installer: overrides
+    component: ory
+    kyma-project.io/installation: ""
+data:
+  global.ory.hydra.persistence.enabled: "false"
+  global.ory.hydra.persistence.postgresql.enabled: "false"
+  hydra.hydra.autoMigrate: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-overrides
+  namespace: kyma-installer
+  labels:
+    installer: overrides
+    component: monitoring
+    kyma-project.io/installation: ""
+data:
+  alertmanager.alertmanagerSpec.resources.limits.cpu: "50m"
+  alertmanager.alertmanagerSpec.resources.limits.memory: "100Mi"
+  alertmanager.alertmanagerSpec.resources.requests.cpu: "20m"
+  alertmanager.alertmanagerSpec.resources.requests.memory: "50Mi"
+  alertmanager.alertmanagerSpec.retention: "1h"
+  prometheus.prometheusSpec.resources.limits.cpu: "150m"
+  prometheus.prometheusSpec.resources.limits.memory: "800Mi"
+  prometheus.prometheusSpec.resources.requests.cpu: "100m"
+  prometheus.prometheusSpec.resources.requests.memory: "200Mi"
+  prometheus.prometheusSpec.retention: "2h"
+  prometheus.prometheusSpec.retentionSize: "500MB"
+  prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage: "1Gi"
+  grafana.persistence.enabled: "false"

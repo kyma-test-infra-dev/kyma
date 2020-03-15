@@ -5,6 +5,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/monitoring"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/golang/glog"
 	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/authn"
@@ -27,7 +31,6 @@ type Config struct {
 }
 
 type kubeRBACProxy struct {
-
 	// authenticator identifies the user for requests to kube-rbac-proxy
 	authenticator.Request
 	// authorizerAttributeGetter builds authorization.Attributes for a request to kube-rbac-proxy
@@ -36,58 +39,53 @@ type kubeRBACProxy struct {
 	authorizer.Authorizer
 	// config for kube-rbac-proxy
 	Config Config
+	//Prometheus metrics for the proxy
+	metrics *monitoring.ProxyMetrics
 }
 
 // New creates an authenticator, an authorizer, and a matching authorizer attributes getter compatible with the kube-rbac-proxy
-func New(config Config, authorizer authorizer.Authorizer, authenticator authenticator.Request) *kubeRBACProxy {
-	return &kubeRBACProxy{authenticator, newKubeRBACProxyAuthorizerAttributesGetter(config.Authorization), authorizer, config}
+func New(config Config, authorizer authorizer.Authorizer, authenticator authenticator.Request, metrics *monitoring.ProxyMetrics) *kubeRBACProxy {
+	return &kubeRBACProxy{authenticator, newKubeRBACProxyAuthorizerAttributesGetter(config.Authorization), authorizer, config, metrics}
 }
 
 // Handle authenticates the client and authorizes the request.
 // If the authn fails, a 401 error is returned. If the authz fails, a 403 error is returned
 func (h *kubeRBACProxy) Handle(w http.ResponseWriter, req *http.Request) bool {
+	reqStart := time.Now()
+	defer h.metrics.RequestDurations.Observe(time.Since(reqStart).Seconds())
+
 	// Authenticate
-	u, ok, err := h.AuthenticateRequest(req)
+	authnStart := time.Now()
+	r, ok, err := h.AuthenticateRequest(req)
+	h.metrics.AuthenticationDurations.Observe(time.Since(authnStart).Seconds())
 	if err != nil {
+		h.metrics.RequestCounterVec.With(prometheus.Labels{"code": fmt.Sprint(http.StatusUnauthorized), "method": req.Method}).Inc()
 		glog.Errorf("Unable to authenticate the request due to an error: %v", err)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	if !ok {
+		h.metrics.RequestCounterVec.With(prometheus.Labels{"code": fmt.Sprint(http.StatusUnauthorized), "method": req.Method}).Inc()
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 
-	// Get authorization attributes
-	attrs := h.GetRequestAttributes(u, req)
-
 	// Authorize
-	authorized, _, err := h.Authorize(attrs)
-	if err != nil {
-		msg := fmt.Sprintf("Authorization error (user=%s, verb=%s, resource=%s, subresource=%s)", u.GetName(), attrs.GetVerb(), attrs.GetResource(), attrs.GetSubresource())
-		glog.Errorf(msg, err)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return false
-	}
-	if authorized != authorizer.DecisionAllow {
-		msg := fmt.Sprintf("Forbidden (user=%s, verb=%s, resource=%s, subresource=%s)", u.GetName(), attrs.GetVerb(), attrs.GetResource(), attrs.GetSubresource())
-		glog.V(2).Info(msg)
-		http.Error(w, msg, http.StatusForbidden)
-		return false
-	}
 
 	if h.Config.Authentication.Header.Enabled {
 		// Seemingly well-known headers to tell the upstream about user's identity
 		// so that the upstream can achieve the original goal of delegating RBAC authn/authz to kube-rbac-proxy
 		headerCfg := h.Config.Authentication.Header
-		req.Header.Set(headerCfg.UserFieldName, u.GetName())
-		req.Header.Set(headerCfg.GroupsFieldName, strings.Join(u.GetGroups(), headerCfg.GroupSeparator))
+		req.Header.Set(headerCfg.UserFieldName, r.User.GetName())
+		req.Header.Set(headerCfg.GroupsFieldName, strings.Join(r.User.GetGroups(), headerCfg.GroupSeparator))
 	}
 
-	req.Header.Set("Impersonate-User", u.GetName())
-	for _, gr := range u.GetGroups() {
+	req.Header.Set("Impersonate-User", r.User.GetName())
+	for _, gr := range r.User.GetGroups() {
 		req.Header.Add("Impersonate-Group", gr)
 	}
+
+	h.metrics.RequestCounterVec.With(prometheus.Labels{"code": fmt.Sprint(http.StatusOK), "method": req.Method}).Inc()
 
 	return true
 }

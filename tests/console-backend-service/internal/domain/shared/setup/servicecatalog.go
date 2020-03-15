@@ -3,20 +3,25 @@ package setup
 import (
 	"log"
 
+	"github.com/hashicorp/go-multierror"
+
+	"github.com/pkg/errors"
 	"github.com/vrischmann/envconfig"
 
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/client"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/configurer"
-	"github.com/pkg/errors"
+	"github.com/kyma-project/kyma/tests/console-backend-service/pkg/injector"
 )
 
 type ServiceCatalogConfigurerConfig struct {
-	ServiceBroker configurer.ServiceBrokerConfig
+	ServiceBroker    configurer.ServiceBrokerConfig
+	TestingAddonsURL string
 }
 
 type ServiceCatalogConfigurer struct {
-	nsConfigurer     *configurer.NamespaceConfigurer
+	NsConfigurer     *configurer.NamespaceConfigurer
 	brokerConfigurer *configurer.ServiceBrokerConfigurer
+	addonsInjector   *injector.Addons
 }
 
 func NewServiceCatalogConfigurer(namespace string, registerServiceBroker bool) (*ServiceCatalogConfigurer, error) {
@@ -38,14 +43,18 @@ func NewServiceCatalogConfigurer(namespace string, registerServiceBroker bool) (
 
 	nsConfigurer := configurer.NewNamespace(namespace, coreCli)
 
+	aInjector, err := injector.NewAddons("testing-addons-cbs", cfg.TestingAddonsURL)
+	if err != nil {
+		return nil, errors.Wrapf(err, "while creating the addons configuration injector")
+	}
 	var brokerConfigurer *configurer.ServiceBrokerConfigurer
 	if registerServiceBroker {
-		cfg.ServiceBroker.Namespace = namespace
-		brokerConfigurer = configurer.NewServiceBroker(cfg.ServiceBroker, svcatCli)
+		brokerConfigurer = configurer.NewServiceBroker(cfg.ServiceBroker, svcatCli, nsConfigurer)
 	}
 
 	return &ServiceCatalogConfigurer{
-		nsConfigurer:     nsConfigurer,
+		addonsInjector:   aInjector,
+		NsConfigurer:     nsConfigurer,
 		brokerConfigurer: brokerConfigurer,
 	}, nil
 }
@@ -53,9 +62,13 @@ func NewServiceCatalogConfigurer(namespace string, registerServiceBroker bool) (
 func (c *ServiceCatalogConfigurer) Setup() error {
 	log.Println("Setting up tests...")
 
-	err := c.nsConfigurer.Create()
+	err := c.NsConfigurer.Create()
 	if err != nil {
 		return errors.Wrap(err, "while creating namespace")
+	}
+
+	if err = c.addonsInjector.InjectClusterAddonsConfiguration(); err != nil {
+		return errors.Wrapf(err, "while injecting the addons configuration")
 	}
 
 	if c.brokerConfigurer != nil {
@@ -75,16 +88,21 @@ func (c *ServiceCatalogConfigurer) Setup() error {
 
 func (c *ServiceCatalogConfigurer) Cleanup() error {
 	log.Println("Cleaning up...")
+	var result *multierror.Error
 
 	if c.brokerConfigurer != nil {
 		if err := c.brokerConfigurer.Delete(); err != nil {
-			return errors.Wrap(err, "while deleting ServiceBroker")
+			result = multierror.Append(result, err)
 		}
 	}
 
-	if err := c.nsConfigurer.Delete(); err != nil {
-		return errors.Wrap(err, "while deleting namespace")
+	if err := c.NsConfigurer.Delete(); err != nil {
+		result = multierror.Append(result, err)
 	}
 
-	return nil
+	if err := c.addonsInjector.CleanupClusterAddonsConfiguration(); err != nil {
+		result = multierror.Append(result, err)
+	}
+
+	return result.ErrorOrNil()
 }

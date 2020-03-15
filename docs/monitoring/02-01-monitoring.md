@@ -2,32 +2,37 @@
 title: Architecture
 ---
 
-This document outlines the monitoring architecture of Kyma, highlighting information sources that Prometheus polls for data to process.
+Before you go into component details, find out more about the end-to-end monitoring flow in Kyma.
+## End-to-end monitoring flow
+
+The complete monitoring flow in Kyma comes down to these components and steps:
+
+![](./assets/monitoring-flow.svg)
+
+1. Upon Kyma installation on a cluster, Prometheus Operator creates a Prometheus instance with the default configuration.
+2. The Prometheus server periodically polls all metrics exposed on `/metrics` endpoints of ports specified in ServiceMonitor CRDs. Prometheus stores these metrics in a time-series database.
+3. If Prometheus detects any metric values matching the logic of alerting rules, it triggers the alerts and passes them to Alertmanager.
+4. If you manually configure a notification channel, you can instantly receive detailed information on metric alerts detected by Prometheus.
+5. You can visualize metrics and track their historical data on Grafana dashboards.
+
+## Monitoring components
+
+The diagram presents monitoring components and the way they interact with one another.
+
+![](./assets/monitoring-architecture.svg)
 
 
-![Monitoring architecture in Kyma](./assets/monitoring.png)
+1. [**Prometheus Operator**](https://github.com/coreos/prometheus-operator) creates a Prometheus instance, manages its deployment, and provides configuration for it. It also deploys Alertmanager and operates ServiceMonitor custom resources that specify monitoring definitions for groups of services.
+
+2. [**Prometheus**](https://prometheus.io/docs/introduction) collects metrics from Pods. Metrics are the time-stamped data that provide information on the running jobs, workload, CPU consumption, memory usage, and more. To obtain such metrics, Prometheus uses the [**kube-state-metrics**](https://github.com/kubernetes/kube-state-metrics) service. It generates the metrics from Kubernetes API objects and exposes them on the `/metrics` HTTP endpoint.  
+Pods can also contain applications with custom metrics, such as the total storage space available in the MinIO server. Prometheus stores this polled data in a time-series database (TSDB) and runs rules over them to generate alerts if it detects any metric anomalies. It also scrapes metrics provided by [**Node Exporter**](https://github.com/mindprince/nvidia_gpu_prometheus_exporter) which exposes existing hardware metrics from external systems as Prometheus metrics.
+
+3. **ServiceMonitors** monitor services and specify the endpoints from which Prometheus should poll the metrics. Even if you expose a handful of metrics in your application, Prometheus polls only those from the `/metrics` endpoints of ports specified in ServiceMonitor CRDs. 
+
+4. [**Alertmanager**](https://prometheus.io/docs/alerting/alertmanager/) receives alerts from Prometheus and forwards this data to configured Slack or Victor Ops channels.  You can use **PrometheusRules** to define alert conditions for metrics. Kyma provides a set of out-of-the-box alerting rules that are passed from Prometheus to Alertmanager. The definitions of such rules specify the alert logic, the value at which alerts are triggered, the alerts' severity, and more. 
+
+    >**NOTE:** There are no notification channels configured in the default monitoring installation. The current configuration allows you to add either Slack or Victor Ops channels.
+
+5. [**Grafana**](https://grafana.com/docs/guides/getting_started/) provides a dashboard and a graph editor to visualize metrics collected from the Prometheus API. Grafana uses the query language called [PromQL](https://prometheus.io/docs/prometheus/latest/querying/basics/) to select and aggregate metrics data from the Prometheus database. To access the Grafana UI, use the `https://grafana.{DOMAIN}` address, where `{DOMAIN}` is the domain of your Kyma cluster.
 
 
-## The Prometheus Operator
-
-The Prometheus Operator is a CoreOS component integrated into Kyma that enables Prometheus deployments to be decoupled from the configuration of the entities they monitor. The task of the Operator is to ensure that Prometheus servers with the specified configuration are always running. If the developer does not specify a configuration for Prometheus instances, the Operator is able to generate and deploy one. The Prometheus instance is responsible for the monitoring of services.
-
-## The Service Monitor
-
-The Service Monitor works in orchestration with the Prometheus resource that the Operator watches. It dictates to a Prometheus resource how to retrieve metrics and enables exposure of those metrics in a standard manner. It also specifies services the Prometheus instance should monitor. Using labels, the Prometheus resource includes a Service Monitor.  
-
-## Monitored Data sources
-
-Prometheus contains the flexibility to poll data from a variety of sources. Virtual machines on which Kubernetes runs make time-stamped data available, reporting on jobs started, workload, CPU performance, capacity, and more. In this case, the Service Monitor watches the Kubernetes API master to detect any job creation. The job produces time-stamped data that Prometheus consumes.
-
-Pods may contain applications with custom metrics that Prometheus can poll through the Prometheus exporter.
-
-## Grafana
-
-Kyma employs Grafana as a third-party resource in `kube-prometheus` to deliver a feature-rich metrics dashboard and graph editor.
-
-To access the Grafana UI, use the following URL: `https://grafana.{DOMAIN}`. Replace DOMAIN with the domain of your Kyma cluster.
-
-## Alertmanager
-
-Alertmanager receives harvested metrics from Prometheus and forwards this data on to the configured channels, such as email or incident management systems.

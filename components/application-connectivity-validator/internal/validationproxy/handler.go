@@ -6,14 +6,17 @@ import (
 	"net/http/httputil"
 	"regexp"
 	"strings"
-
-	log "github.com/sirupsen/logrus"
-
-	"github.com/kyma-project/kyma/components/application-connectivity-validator/internal/httptools"
-
-	"github.com/kyma-project/kyma/components/application-connectivity-validator/internal/apperrors"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/patrickmn/go-cache"
+	log "github.com/sirupsen/logrus"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kyma-project/kyma/components/application-connectivity-validator/internal/apperrors"
+	"github.com/kyma-project/kyma/components/application-connectivity-validator/internal/httptools"
+	"github.com/kyma-project/kyma/components/application-operator/pkg/apis/applicationconnector/v1alpha1"
 )
 
 const (
@@ -24,31 +27,66 @@ type ProxyHandler interface {
 	ProxyAppConnectorRequests(w http.ResponseWriter, r *http.Request)
 }
 
+//go:generate mockery -name=ApplicationGetter
+type ApplicationGetter interface {
+	Get(name string, options metav1.GetOptions) (*v1alpha1.Application, error)
+}
+
+//go:generate mockery -name=Cache
+type Cache interface {
+	Get(k string) (interface{}, bool)
+	Set(k string, x interface{}, d time.Duration)
+}
+
 type proxyHandler struct {
 	group                    string
 	tenant                   string
 	eventServicePathPrefixV1 string
 	eventServicePathPrefixV2 string
 	eventServiceHost         string
+	eventMeshPathPrefix      string
+	eventMeshHost            string
 	appRegistryPathPrefix    string
 	appRegistryHost          string
 
 	eventsProxy      *httputil.ReverseProxy
+	eventMeshProxy   *httputil.ReverseProxy
 	appRegistryProxy *httputil.ReverseProxy
+
+	applicationGetter ApplicationGetter
+	cache             Cache
 }
 
-func NewProxyHandler(group, tenant, eventServicePathPrefixV1, eventServicePathPrefixV2, eventServiceHost, appRegistryPathPrefix, appRegistryHost string) *proxyHandler {
+func NewProxyHandler(
+	group string,
+	tenant string,
+	eventServicePathPrefixV1 string,
+	eventServicePathPrefixV2 string,
+	eventServiceHost string,
+	eventMeshPathPrefix string,
+	eventMeshHost string,
+	appRegistryPathPrefix string,
+	appRegistryHost string,
+	applicationGetter ApplicationGetter,
+	cache Cache) *proxyHandler {
+
 	return &proxyHandler{
-		group:  group,
-		tenant: tenant,
+		group:                    group,
+		tenant:                   tenant,
 		eventServicePathPrefixV1: eventServicePathPrefixV1,
 		eventServicePathPrefixV2: eventServicePathPrefixV2,
 		eventServiceHost:         eventServiceHost,
+		eventMeshPathPrefix:      eventMeshPathPrefix,
+		eventMeshHost:            eventMeshHost,
 		appRegistryPathPrefix:    appRegistryPathPrefix,
 		appRegistryHost:          appRegistryHost,
 
 		eventsProxy:      createReverseProxy(eventServiceHost),
+		eventMeshProxy:   createReverseProxy(eventMeshHost, withRewriteBaseURL("/"), withEnforceURLHost),
 		appRegistryProxy: createReverseProxy(appRegistryHost),
+
+		applicationGetter: applicationGetter,
+		cache:             cache,
 	}
 }
 
@@ -67,8 +105,15 @@ func (ph *proxyHandler) ProxyAppConnectorRequests(w http.ResponseWriter, r *http
 
 	log.Infof("Proxying request for %s application. Path: %s", applicationName, r.URL.Path)
 
+	applicationClientIDs, err := ph.getCompassMetadataClientIDs(applicationName)
+	if err != nil {
+		httptools.RespondWithError(w, apperrors.Internal("Failed to get Application ClientIds: %s", err))
+		return
+	}
+
 	subjects := extractSubjects(certInfoData)
-	if !hasValidSubject(subjects, applicationName, ph.group, ph.tenant) {
+
+	if !hasValidSubject(subjects, applicationClientIDs, applicationName, ph.group, ph.tenant) {
 		httptools.RespondWithError(w, apperrors.Forbidden("No valid subject found"))
 		return
 	}
@@ -82,25 +127,57 @@ func (ph *proxyHandler) ProxyAppConnectorRequests(w http.ResponseWriter, r *http
 	reverseProxy.ServeHTTP(w, r)
 }
 
+func (ph *proxyHandler) getCompassMetadataClientIDs(applicationName string) ([]string, apperrors.AppError) {
+	applicationClientIDs, found := ph.getClientIDsFromCache(applicationName)
+	if !found {
+		var err apperrors.AppError
+		applicationClientIDs, err = ph.getClientIDsFromResource(applicationName)
+		if err != nil {
+			return []string{}, err
+		}
+
+		ph.cache.Set(applicationName, applicationClientIDs, cache.DefaultExpiration)
+	}
+	return applicationClientIDs, nil
+}
+
+func (ph *proxyHandler) getClientIDsFromCache(applicationName string) ([]string, bool) {
+	clientIDs, found := ph.cache.Get(applicationName)
+	if !found {
+		return []string{}, found
+	}
+	return clientIDs.([]string), found
+}
+
+func (ph *proxyHandler) getClientIDsFromResource(applicationName string) ([]string, apperrors.AppError) {
+	application, err := ph.applicationGetter.Get(applicationName, metav1.GetOptions{})
+	if err != nil {
+		return []string{}, apperrors.Internal("failed to get %s application: %s", applicationName, err)
+	}
+	if application.Spec.CompassMetadata == nil {
+		return []string{}, nil
+	}
+
+	return application.Spec.CompassMetadata.Authentication.ClientIds, nil
+}
+
 func (ph *proxyHandler) mapRequestToProxy(path string) (*httputil.ReverseProxy, apperrors.AppError) {
-
-	if strings.HasPrefix(path, ph.eventServicePathPrefixV1) {
+	switch {
+	case strings.HasPrefix(path, ph.eventServicePathPrefixV1), strings.HasPrefix(path, ph.eventServicePathPrefixV2):
 		return ph.eventsProxy, nil
-	}
 
-	if strings.HasPrefix(path, ph.eventServicePathPrefixV2) {
-		return ph.eventsProxy, nil
-	}
+	case strings.HasPrefix(path, ph.eventMeshPathPrefix):
+		return ph.eventMeshProxy, nil
 
-	if strings.HasPrefix(path, ph.appRegistryPathPrefix) {
+	case strings.HasPrefix(path, ph.appRegistryPathPrefix):
 		return ph.appRegistryProxy, nil
 	}
 
 	return nil, apperrors.NotFound("Could not determine destination host. Requested resource not found")
 }
 
-func hasValidSubject(subjects []string, appName, group, tenant string) bool {
-	subjectValidator := newSubjectValidator(appName, group, tenant)
+func hasValidSubject(subjects, applicationClientIDs []string, appName, group, tenant string) bool {
+	subjectValidator := newSubjectValidator(applicationClientIDs, appName, group, tenant)
 
 	for _, s := range subjects {
 		parsedSubject := parseSubject(s)
@@ -113,22 +190,53 @@ func hasValidSubject(subjects []string, appName, group, tenant string) bool {
 	return false
 }
 
-func newSubjectValidator(appName, group, tenant string) func(subject pkix.Name) bool {
-	validateCommonName := func(subject pkix.Name) bool {
+func newSubjectValidator(applicationClientIDs []string, appName, group, tenant string) func(subject pkix.Name) bool {
+	validateCommonNameWithAppName := func(subject pkix.Name) bool {
 		return appName == subject.CommonName
 	}
-
-	if group == "" || tenant == "" {
-		return validateCommonName
+	validateCommonNameWithClientIDs := func(subject pkix.Name) bool {
+		for _, id := range applicationClientIDs {
+			if subject.CommonName == id {
+				return true
+			}
+		}
+		return false
+	}
+	validateSubjectField := func(subjectField []string, expectedValue string) bool {
+		return len(subjectField) == 1 && subjectField[0] == expectedValue
 	}
 
-	return func(subject pkix.Name) bool {
-		return validateCommonName(subject) && validateSubjectField(subject.Organization, tenant) && validateSubjectField(subject.OrganizationalUnit, group)
+	switch {
+	case len(applicationClientIDs) == 0 && !areStringsFilled(group, tenant):
+		return validateCommonNameWithAppName
+
+	case len(applicationClientIDs) == 0 && areStringsFilled(group, tenant):
+		return func(subject pkix.Name) bool {
+			return validateCommonNameWithAppName(subject) && validateSubjectField(subject.Organization, tenant) && validateSubjectField(subject.OrganizationalUnit, group)
+		}
+
+	case len(applicationClientIDs) != 0 && !areStringsFilled(group, tenant):
+		return validateCommonNameWithClientIDs
+
+	case len(applicationClientIDs) != 0 && areStringsFilled(group, tenant):
+		return func(subject pkix.Name) bool {
+			return validateCommonNameWithClientIDs(subject) && validateSubjectField(subject.Organization, tenant) && validateSubjectField(subject.OrganizationalUnit, group)
+		}
+
+	default:
+		return func(subject pkix.Name) bool {
+			return false
+		}
 	}
 }
 
-func validateSubjectField(subjectField []string, expectedValue string) bool {
-	return len(subjectField) == 1 && subjectField[0] == expectedValue
+func areStringsFilled(strs ...string) bool {
+	for _, str := range strs {
+		if str == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func extractSubjects(certInfoData string) []string {
@@ -182,11 +290,16 @@ func extractSubject(subject string) map[string]string {
 	return result
 }
 
-func createReverseProxy(destinationHost string) *httputil.ReverseProxy {
+func createReverseProxy(destinationHost string, reqOpts ...requestOption) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Director: func(request *http.Request) {
 			request.URL.Scheme = "http"
 			request.URL.Host = destinationHost
+
+			for _, opt := range reqOpts {
+				opt(request)
+			}
+
 			log.Infof("Proxying request to target URL: %s", request.URL)
 		},
 		ModifyResponse: func(response *http.Response) error {
@@ -194,4 +307,19 @@ func createReverseProxy(destinationHost string) *httputil.ReverseProxy {
 			return nil
 		},
 	}
+}
+
+type requestOption func(req *http.Request)
+
+// withRewriteBaseURL rewrites the Request's Path.
+func withRewriteBaseURL(path string) requestOption {
+	return func(req *http.Request) {
+		req.URL.Path = path
+	}
+}
+
+// withEnforceURLHost enforces the Request's Host field to be empty to ensure
+// the 'Host' HTTP header is set to the host name defined in the Request's URL.
+func withEnforceURLHost(req *http.Request) {
+	req.Host = ""
 }

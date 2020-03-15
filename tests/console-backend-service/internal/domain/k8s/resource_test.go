@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/client"
-	"github.com/kyma-project/kyma/tests/console-backend-service/internal/dex"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared/auth"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/graphql"
 	"github.com/kyma-project/kyma/tests/console-backend-service/pkg/waiter"
@@ -21,7 +20,6 @@ const (
 	resourceName       = "test-resource"
 	resourceKind       = "Pod"
 	resourceAPIVersion = "v1"
-	resourceNamespace  = "console-backend-service-resource"
 )
 
 type createResourceMutationResponse struct {
@@ -29,28 +27,16 @@ type createResourceMutationResponse struct {
 }
 
 func TestResource(t *testing.T) {
-	dex.SkipTestIfSCIEnabled(t)
-
 	c, err := graphql.New()
 	require.NoError(t, err)
 
 	k8sClient, _, err := client.NewClientWithConfig()
 	require.NoError(t, err)
 
-	t.Log("Creating namespace...")
-	_, err = k8sClient.Namespaces().Create(fixNamespace(resourceNamespace))
-	require.NoError(t, err)
-
-	defer func() {
-		t.Log("Deleting namespace...")
-		err = k8sClient.Namespaces().Delete(resourceNamespace, &metav1.DeleteOptions{})
-		require.NoError(t, err)
-	}()
-
 	var createRes createResourceMutationResponse
 	resourceJSON, err := fixResourceJSON()
 	require.NoError(t, err)
-	err = c.Do(fixCreateResourceMutation(resourceNamespace, resourceJSON), &createRes)
+	err = c.Do(fixCreateResourceMutation(testNamespace, resourceJSON), &createRes)
 	require.NoError(t, err)
 	require.NotNil(t, createRes)
 
@@ -58,7 +44,7 @@ func TestResource(t *testing.T) {
 
 	t.Log("Retrieving resource...")
 	err = waiter.WaitAtMost(func() (bool, error) {
-		_, err := k8sClient.Pods(resourceNamespace).Get(resourceName, metav1.GetOptions{})
+		_, err := k8sClient.Pods(testNamespace).Get(resourceName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -68,7 +54,7 @@ func TestResource(t *testing.T) {
 
 	t.Log("Checking authorization directives...")
 	ops := &auth.OperationsInput{
-		auth.Create: {fixCreateResourceMutation(resourceNamespace, resourceJSON)},
+		auth.Create: {fixCreateResourceMutation(testNamespace, resourceJSON)},
 	}
 	AuthSuite.Run(t, ops)
 }
@@ -90,7 +76,7 @@ func fixResourceJSON() (string, error) {
 		"apiVersion": resourceAPIVersion,
 		"metadata": map[string]interface{}{
 			"name":      resourceName,
-			"namespace": resourceNamespace,
+			"namespace": testNamespace,
 		},
 	}
 
@@ -100,7 +86,7 @@ func fixResourceJSON() (string, error) {
 func validateResource(t *testing.T, resource map[string]interface{}) {
 	createdMeta, ok := resource["metadata"].(map[string]interface{})
 	require.True(t, ok)
-	assert.Equal(t, resourceNamespace, createdMeta["namespace"])
+	assert.Equal(t, testNamespace, createdMeta["namespace"])
 	assert.Equal(t, resourceName, createdMeta["name"])
 	assert.Equal(t, resourceKind, resource["kind"])
 	assert.Equal(t, resourceAPIVersion, resource["apiVersion"])

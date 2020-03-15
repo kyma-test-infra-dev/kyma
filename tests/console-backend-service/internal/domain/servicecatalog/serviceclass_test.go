@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/kyma-project/kyma/tests/console-backend-service/internal/client"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared/auth"
-
-	"github.com/kyma-project/kyma/components/cms-controller-manager/pkg/apis/cms/v1alpha1"
-	"github.com/kyma-project/kyma/tests/console-backend-service/internal/client"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared/fixture"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared/wait"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/graphql"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/resource"
+	"github.com/kyma-project/rafter/pkg/apis/rafter/v1beta1"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,17 +34,22 @@ func TestServiceClassesQueries(t *testing.T) {
 
 	expectedResource := serviceClass()
 
-	cmsCli, _, err := client.NewDynamicClientWithConfig()
+	rafterCli, _, err := client.NewDynamicClientWithConfig()
 	require.NoError(t, err)
 
-	docsTopicClient := resource.NewDocsTopic(cmsCli, expectedResource.Namespace, t.Logf)
+	// t.Log("Setup test service")
+	// host, err := mockice.Start(rafterCli, TestNamespace, MockiceSvcName)
+	// require.NoError(t, err)
+	// defer mockice.Stop(rafterCli, TestNamespace, MockiceSvcName)
 
-	t.Log(fmt.Sprintf("Create docsTopic %s", expectedResource.Name))
-	err = docsTopicClient.Create(fixDocsTopicMeta(expectedResource.Name), fixCommonDocsTopicSpec())
+	assetGroupClient := resource.NewAssetGroup(rafterCli, expectedResource.Namespace, t.Logf)
+
+	t.Log(fmt.Sprintf("Create AssetGroup %s", expectedResource.Name))
+	err = assetGroupClient.Create(fixAssetGroupMeta(expectedResource.Name), fixCommonAssetGroupSpec())
 	require.NoError(t, err)
 
-	t.Log(fmt.Sprintf("Wait for docsTopic %s Ready", expectedResource.Name))
-	err = wait.ForDocsTopicReady(expectedResource.Name, docsTopicClient.Get)
+	t.Log(fmt.Sprintf("Wait for AssetGroup %s Ready", expectedResource.Name))
+	err = wait.ForAssetGroupReady(expectedResource.Name, assetGroupClient.Get)
 	require.NoError(t, err)
 
 	resourceDetailsQuery := `
@@ -75,7 +80,7 @@ func TestServiceClassesQueries(t *testing.T) {
 			instanceCreateParameterSchema
 			bindingCreateParameterSchema
 		}
-		docsTopic {
+		assetGroup {
 			name
 			namespace
     		groupName
@@ -112,6 +117,14 @@ func TestServiceClassesQueries(t *testing.T) {
 		checkClass(t, expectedResource, res.ServiceClass)
 	})
 
+	t.Log(fmt.Sprintf("Delete AssetGroup %s", expectedResource.Name))
+	err = assetGroupClient.Delete(expectedResource.Name)
+	require.NoError(t, err)
+
+	t.Log(fmt.Sprintf("Wait for AssetGroup %s Deletion", expectedResource.Name))
+	err = wait.ForAssetGroupDeletion(expectedResource.Name, assetGroupClient.Get)
+	require.NoError(t, err)
+
 	t.Log("Checking authorization directives...")
 	ops := &auth.OperationsInput{
 		auth.Get:  {fixServiceClassRequest(resourceDetailsQuery, expectedResource)},
@@ -134,9 +147,9 @@ func checkClass(t *testing.T, expected, actual shared.ServiceClass) {
 	require.NotEmpty(t, actual.Plans)
 	assertPlanExistsAndEqual(t, actual.Plans, expected.Plans[0])
 
-	// DocsTopic
-	require.NotEmpty(t, actual.DocsTopic)
-	checkDocsTopic(t, fixture.DocsTopic(expected.Namespace, expected.Name), actual.DocsTopic)
+	// AssetGroup
+	require.NotEmpty(t, actual.AssetGroup)
+	checkAssetGroup(t, fixture.AssetGroup(expected.Namespace, expected.Name), actual.AssetGroup)
 }
 
 func checkPlan(t *testing.T, expected, actual shared.ServicePlan) {
@@ -150,7 +163,7 @@ func checkPlan(t *testing.T, expected, actual shared.ServicePlan) {
 	assert.Equal(t, expected.RelatedServiceClassName, actual.RelatedServiceClassName)
 }
 
-func checkDocsTopic(t *testing.T, expected, actual shared.DocsTopic) {
+func checkAssetGroup(t *testing.T, expected, actual shared.AssetGroup) {
 	// Name
 	assert.Equal(t, expected.Name, actual.Name)
 
@@ -241,22 +254,22 @@ func fixServiceClassesRequest(resourceDetailsQuery string, expectedResource shar
 	return req
 }
 
-func fixDocsTopicMeta(name string) metav1.ObjectMeta {
+func fixAssetGroupMeta(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name: name,
 	}
 }
 
-func fixCommonDocsTopicSpec() v1alpha1.CommonDocsTopicSpec {
-	return v1alpha1.CommonDocsTopicSpec{
-		DisplayName: "Docs Topic Sample",
-		Description: "Docs Topic Description",
-		Sources: []v1alpha1.Source{
+func fixCommonAssetGroupSpec() v1beta1.CommonAssetGroupSpec {
+	return v1beta1.CommonAssetGroupSpec{
+		DisplayName: "Asset Group Sample",
+		Description: "Asset Group Description",
+		Sources: []v1beta1.Source{
 			{
-				Type: "openapi",
-				Name: "openapi",
-				Mode: v1alpha1.DocsTopicSingle,
-				URL:  "https://petstore.swagger.io/v2/swagger.json",
+				Type: "markdown",
+				Name: "markdown",
+				Mode: v1beta1.AssetGroupSingle,
+				URL:  "https://raw.githubusercontent.com/kyma-project/kyma/master/README.md",
 			},
 		},
 	}

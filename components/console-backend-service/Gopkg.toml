@@ -1,5 +1,5 @@
 required = [
-    "golang.org/x/tools/cmd/goimports",
+    "github.com/kyma-project/kyma/tools/failery/cmd/failery",
     "github.com/urfave/cli",
     "k8s.io/code-generator/cmd/defaulter-gen",
     "k8s.io/code-generator/cmd/deepcopy-gen",
@@ -7,38 +7,23 @@ required = [
     "k8s.io/code-generator/cmd/client-gen",
     "k8s.io/code-generator/cmd/lister-gen",
     "k8s.io/code-generator/cmd/informer-gen",
-    "k8s.io/code-generator/cmd/openapi-gen",
-    "github.com/kyma-project/kyma/tools/failery",
-    "github.com/kisielk/errcheck",
 ]
 
 [[constraint]]
-  name = "github.com/kisielk/errcheck"
-  revision = "e14f8d59a22d460d56c5ee92507cd94c78fbf274"
+  name = "github.com/urfave/cli"
+  version = "=v1.20.0"
 
 [[override]]
   name = "golang.org/x/net"
   branch = "release-branch.go1.10"
 
 [[constraint]]
-  name = "k8s.io/api"
-  version = "kubernetes-1.12.3"
-
-[[constraint]]
-  name = "k8s.io/apimachinery"
-  version = "kubernetes-1.12.3"
-
-[[constraint]]
-  name = "k8s.io/client-go"
-  version = "kubernetes-1.12.3"
-
-[[constraint]]
   revision = "44145f04b68cf362d9c4df2182967c2275eaefed"
   name = "github.com/golang/glog"
 
 [[constraint]]
-  name = "github.com/kubernetes-incubator/service-catalog"
-  version = "v0.1.36"
+  name = "github.com/kubernetes-sigs/service-catalog"
+  revision = "ccab5234396729fee8dbf70620eafdfbc3d1a6af"
 
 [[constraint]]
   name = "github.com/stretchr/testify"
@@ -53,32 +38,44 @@ required = [
   version = "v0.7.2"
 
 [[constraint]]
-  name = "github.com/kubeless/kubeless"
-  version = "v0.4.0"
-
-[[constraint]]
   name = "github.com/moby/moby"
   version = "v1.13.1"
 
 [[constraint]]
   name="github.com/kyma-project/kyma"
-  revision = "0291cf0cd19b7171d19ec2b4664bfa1f978032f8"
+  revision = "1e9aa1b23a3911a42b425dadeb1b8abf39d32ebe"
+
+[[constraint]]
+  name="github.com/kyma-project/rafter"
+  revision = "1b5e6fe41dabafd462de0cfce628184173ce01a3"
+
+[[constraint]]
+  name="github.com/kyma-project/helm-broker"
+  revision = "d07feb2d365a58645031e96b27a95c8d50bb8349"
+
+[[override]]
+  name="sigs.k8s.io/controller-runtime"
+  version = "v0.2.0"
 
 [[override]]
   name = "k8s.io/api"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.16.4"
 
 [[override]]
   name = "k8s.io/apimachinery"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.16.4"
 
-[[constraint]]
+[[override]]
+  name = "k8s.io/client-go"
+  version = "kubernetes-1.16.4"
+
+[[override]]
   name = "k8s.io/apiserver"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.16.4"
 
-[[constraint]]
+[[override]]
   name = "k8s.io/code-generator"
-  branch = "release-1.11"
+  version = "kubernetes-1.16.4"
 
 [[constraint]]
   name = "github.com/vrischmann/envconfig"
@@ -95,6 +92,6 @@ required = [
   non-go = true
 
   [[prune.project]]
-        name = "k8s.io/code-generator"
-        non-go = false
-        unused-packages = false
+    name = "k8s.io/code-generator"
+    non-go = false
+    unused-packages = false

@@ -2,13 +2,15 @@
 
 ## Overview
 
-This chart includes [knative nats streaming provisioner](https://github.com/knative/eventing/tree/master/contrib/natss/config) release files.
+This chart includes Knative NATS streaming provisioner release files.
 
 Included releases:
- * https://github.com/knative/eventing/blob/v0.5.0/contrib/natss/config/provisioner.yaml
 
-Kyma-specific changes: 
+* https://github.com/knative/eventing-contrib/tree/release-0.10/natss/config
+
+Kyma-specific changes:
 
 * New environment variables: **{EB_USER}** and **{EB_PASS}** added for authentication.
 * Environment variables **{DEFAULT_CLUSTER_ID}** and **{DEFAULT_NATSS_URL}** set for Kyma-specific needs.
 * A new label `rand` added to Deployments to force Pod restart during the upgrade.
+* A new label `kyma-project.io/dashboard: event-mesh` added for event-mesh dashboard.

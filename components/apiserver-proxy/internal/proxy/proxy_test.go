@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/authn"
 	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/authz"
+	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/monitoring"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/request/bearertoken"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -29,6 +31,7 @@ func TestProxyWithOIDCSupport(t *testing.T) {
 
 	fakeUser := user.DefaultInfo{Name: "Foo Bar", Groups: []string{"foo-bars"}}
 	authenticator := fakeOIDCAuthenticator(t, &fakeUser)
+	metrics, _ := monitoring.NewProxyMetrics()
 
 	scenario := setupTestScenario()
 	for _, v := range scenario {
@@ -36,7 +39,7 @@ func TestProxyWithOIDCSupport(t *testing.T) {
 		t.Run(v.description, func(t *testing.T) {
 
 			w := httptest.NewRecorder()
-			proxy := New(cfg, v.authorizer, authenticator)
+			proxy := New(cfg, v.authorizer, authenticator, metrics)
 
 			proxy.Handle(w, v.req)
 
@@ -119,17 +122,7 @@ func setupTestScenario() []testCase {
 			},
 		},
 		{
-			description: "Request with valid token should return 403 due to lack of permissions",
-			given: given{
-				req:        fakeJWTRequest("GET", "/accounts", "Bearer VALID"),
-				authorizer: denier{},
-			},
-			expected: expected{
-				status: http.StatusForbidden,
-			},
-		},
-		{
-			description: "Request with valid token, should return 200 due to lack of permissions",
+			description: "Request with valid token, should return 200 due to sufficient permissions",
 			given: given{
 				req:        fakeJWTRequest("GET", "/accounts", "Bearer VALID"),
 				authorizer: approver{},
@@ -158,11 +151,11 @@ func requestFor(method, path string) *http.Request {
 
 func fakeOIDCAuthenticator(t *testing.T, fakeUser *user.DefaultInfo) authenticator.Request {
 
-	auth := bearertoken.New(authenticator.TokenFunc(func(token string) (user.Info, bool, error) {
+	auth := bearertoken.New(authenticator.TokenFunc(func(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 		if token != "VALID" {
 			return nil, false, nil
 		}
-		return fakeUser, true, nil
+		return &authenticator.Response{User: fakeUser}, true, nil
 	}))
 	return auth
 }

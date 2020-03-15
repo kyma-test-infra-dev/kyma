@@ -12,17 +12,21 @@ import (
 	bu "github.com/kyma-project/kyma/components/service-binding-usage-controller/pkg/client/clientset/versioned"
 	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	messagingv1alpha1 "knative.dev/eventing/pkg/apis/messaging/v1alpha1"
+	messagingclientv1alpha1 "knative.dev/eventing/pkg/client/clientset/versioned/typed/messaging/v1alpha1"
 )
 
 const (
-	appEnvTester        = "app-env-tester"
-	applicationName     = "application-for-testing"
-	apiServiceID        = "api-service-id"
-	eventsServiceID     = "events-service-id"
-	apiBindingName      = "app-binding"
-	apiBindingUsageName = "app-binding"
-	gatewayURL          = "https://gateway.local"
+	appEnvTester         = "app-env-tester"
+	applicationName      = "application-for-testing"
+	apiServiceID         = "api-service-id"
+	eventsServiceID      = "events-service-id"
+	apiBindingName       = "app-binding"
+	apiBindingUsageName  = "app-binding"
+	gatewayURL           = "https://gateway.local"
+	integrationNamespace = "kyma-integration"
 )
 
 // AppBrokerUpgradeTest tests the Helm Broker business logic after Kyma upgrade phase
@@ -32,6 +36,7 @@ type AppBrokerUpgradeTest struct {
 	BUInterface             bu.Interface
 	AppBrokerInterface      appBroker.Interface
 	AppConnectorInterface   appConnector.Interface
+	MessagingInterface      messagingclientv1alpha1.MessagingV1alpha1Interface
 }
 
 // NewAppBrokerUpgradeTest returns new instance of the AppBrokerUpgradeTest
@@ -39,13 +44,15 @@ func NewAppBrokerUpgradeTest(scCli clientset.Interface,
 	k8sCli kubernetes.Interface,
 	buCli bu.Interface,
 	abCli appBroker.Interface,
-	acCli appConnector.Interface) *AppBrokerUpgradeTest {
+	acCli appConnector.Interface,
+	msgCli messagingclientv1alpha1.MessagingV1alpha1Interface) *AppBrokerUpgradeTest {
 	return &AppBrokerUpgradeTest{
 		ServiceCatalogInterface: scCli,
 		K8sInterface:            k8sCli,
 		BUInterface:             buCli,
 		AppBrokerInterface:      abCli,
 		AppConnectorInterface:   acCli,
+		MessagingInterface:      msgCli,
 	}
 }
 
@@ -57,6 +64,7 @@ type appBrokerFlow struct {
 	buInterface           bu.Interface
 	appBrokerInterface    appBroker.Interface
 	appConnectorInterface appConnector.Interface
+	messagingInterface    messagingclientv1alpha1.MessagingV1alpha1Interface
 }
 
 // CreateResources creates resources needed for e2e upgrade test
@@ -84,12 +92,14 @@ func (ut *AppBrokerUpgradeTest) newFlow(stop <-chan struct{}, log logrus.FieldLo
 		appBrokerInterface:    ut.AppBrokerInterface,
 		appConnectorInterface: ut.AppConnectorInterface,
 		scInterface:           ut.ServiceCatalogInterface,
+		messagingInterface:    ut.MessagingInterface,
 	}
 }
 
 func (f *appBrokerFlow) CreateResources() error {
 	// iterate over steps
 	for _, fn := range []func() error{
+		f.createChannel,
 		f.createApplication,
 		f.createApplicationMapping,
 		f.deployEnvTester,
@@ -103,6 +113,7 @@ func (f *appBrokerFlow) CreateResources() error {
 	} {
 		err := fn()
 		if err != nil {
+			f.log.Errorln(err)
 			f.logReport()
 			return err
 		}
@@ -123,10 +134,12 @@ func (f *appBrokerFlow) TestResources() error {
 		f.waitForInstancesDeleted,
 		f.deleteApplicationMapping,
 		f.deleteApplication,
+		f.deleteChannel,
 		f.waitForClassesRemoved,
 	} {
 		err := fn()
 		if err != nil {
+			f.log.Errorln(err)
 			f.logReport()
 			return err
 		}
@@ -144,59 +157,86 @@ func (f *appBrokerFlow) deleteApplication() error {
 	return f.appConnectorInterface.ApplicationconnectorV1alpha1().Applications().Delete(applicationName, &metav1.DeleteOptions{})
 }
 
-func (f *appBrokerFlow) createApplication() error {
-	f.log.Info("Creating Application")
-	_, err := f.appConnectorInterface.ApplicationconnectorV1alpha1().Applications().Create(&v1alpha1.Application{
+func (f *appBrokerFlow) createChannel() error {
+	channel := &messagingv1alpha1.Channel{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "Application",
-			APIVersion: "applicationconnector.kyma-project.io/v1alpha1",
+			Kind:       "Channel",
+			APIVersion: "messaging.knative.dev/v1alpha1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: applicationName,
+			Labels: map[string]string{
+				"application-name": applicationName,
+			},
 		},
-		Spec: v1alpha1.ApplicationSpec{
-			AccessLabel:      "app-access-label",
-			Description:      "Application used by application acceptance test",
-			SkipInstallation: true,
-			Services: []v1alpha1.Service{
-				{
-					ID:   apiServiceID,
-					Name: apiServiceID,
-					Labels: map[string]string{
-						"connected-app": "app-name",
-					},
-					ProviderDisplayName: "provider",
-					DisplayName:         "Some API",
-					Description:         "Application Service Class with API",
-					Tags:                []string{},
-					Entries: []v1alpha1.Entry{
-						{
-							Type:        "API",
-							AccessLabel: "accessLabel",
-							GatewayUrl:  gatewayURL,
+	}
+
+	_, err := f.messagingInterface.Channels(integrationNamespace).Create(channel)
+	return err
+}
+
+func (f *appBrokerFlow) deleteChannel() error {
+	return f.messagingInterface.Channels(integrationNamespace).Delete(applicationName, &metav1.DeleteOptions{})
+}
+
+func (f *appBrokerFlow) createApplication() error {
+	f.log.Info("Creating Application")
+	return wait.Poll(time.Millisecond*500, time.Second*30, func() (done bool, err error) {
+		if _, err = f.appConnectorInterface.ApplicationconnectorV1alpha1().Applications().Create(&v1alpha1.Application{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Application",
+				APIVersion: "applicationconnector.kyma-project.io/v1alpha1",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: applicationName,
+			},
+			Spec: v1alpha1.ApplicationSpec{
+				AccessLabel:      "app-access-label",
+				Description:      "Application used by application acceptance test",
+				SkipInstallation: true,
+				Services: []v1alpha1.Service{
+					{
+						ID:   apiServiceID,
+						Name: apiServiceID,
+						Labels: map[string]string{
+							"connected-app": "app-name",
+						},
+						ProviderDisplayName: "provider",
+						DisplayName:         "Some API",
+						Description:         "Application Service Class with API",
+						Tags:                []string{},
+						Entries: []v1alpha1.Entry{
+							{
+								Type:        "API",
+								AccessLabel: "accessLabel",
+								GatewayUrl:  gatewayURL,
+							},
 						},
 					},
-				},
-				{
-					ID:   eventsServiceID,
-					Name: eventsServiceID,
-					Labels: map[string]string{
-						"connected-app": "app-name",
-					},
-					ProviderDisplayName: "provider",
-					DisplayName:         "Some Events",
-					Description:         "Application Service Class with Events",
-					Tags:                []string{},
-					Entries: []v1alpha1.Entry{
-						{
-							Type: "Events",
+					{
+						ID:   eventsServiceID,
+						Name: eventsServiceID,
+						Labels: map[string]string{
+							"connected-app": "app-name",
+						},
+						ProviderDisplayName: "provider",
+						DisplayName:         "Some Events",
+						Description:         "Application Service Class with Events",
+						Tags:                []string{},
+						Entries: []v1alpha1.Entry{
+							{
+								Type: "Events",
+							},
 						},
 					},
 				},
 			},
-		},
+		}); err != nil {
+			f.log.Errorf("while creating application: %v", err)
+			return false, nil
+		}
+		return true, nil
 	})
-	return err
 }
 
 func (f *appBrokerFlow) deployEnvTester() error {

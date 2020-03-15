@@ -1,13 +1,12 @@
 package broker
 
 import (
-	"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
+	"github.com/kubernetes-sigs/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	"github.com/kyma-project/kyma/components/application-broker/internal"
 	"github.com/kyma-project/kyma/components/application-broker/pkg/apis/applicationconnector/v1alpha1"
 	"github.com/pkg/errors"
 	osb "github.com/pmorie/go-open-service-broker-client/v2"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -20,11 +19,21 @@ func fixApp() *internal.Application {
 		Name: fixAppName(),
 		Services: []internal.Service{
 			{
-				ID:          internal.ApplicationServiceID(fixServiceID()),
-				DisplayName: "Orders",
-				APIEntry: &internal.APIEntry{
-					GatewayURL:  "www.gate.com",
-					AccessLabel: "free",
+				ID:          fixAppServiceID(),
+				DisplayName: fixDisplayName(),
+				Entries: []internal.Entry{
+					{
+						Type: "API",
+						APIEntry: &internal.APIEntry{
+							GatewayURL:  "http://gateway.io",
+							TargetURL:   "http://target.io",
+							Name:        "api-mock",
+							AccessLabel: "access-label",
+						},
+					},
+					{
+						Type: "Events",
+					},
 				},
 				EventProvider: true,
 			},
@@ -39,19 +48,11 @@ func fixEventActivation() *v1alpha1.EventActivation {
 			APIVersion: "applicationconnector.kyma-project.io/v1alpha1",
 		},
 		ObjectMeta: v1.ObjectMeta{
-			Name:      fixServiceID(),
-			Namespace: fixNs(),
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					UID:        fixServiceInstanceUID(),
-					Name:       fixServiceInstanceName(),
-					APIVersion: "servicecatalog.k8s.io/v1beta1",
-					Kind:       "ServiceInstance",
-				},
-			},
+			Name:      string(fixServiceID()),
+			Namespace: string(fixNs()),
 		},
 		Spec: v1alpha1.EventActivationSpec{
-			DisplayName: "Orders",
+			DisplayName: fixDisplayName(),
 			SourceID:    string(fixAppName()),
 		},
 	}
@@ -61,8 +62,8 @@ func fixInstanceID() internal.InstanceID {
 	return internal.InstanceID("inst-123")
 }
 
-func fixNs() string {
-	return "example-namesapce"
+func fixNs() internal.Namespace {
+	return "example-namespace"
 }
 
 func fixNewCreateInstanceOperation() *internal.InstanceOperation {
@@ -71,7 +72,6 @@ func fixNewCreateInstanceOperation() *internal.InstanceOperation {
 		OperationID: fixOperationID(),
 		Type:        internal.OperationTypeCreate,
 		State:       internal.OperationStateInProgress,
-		ParamsHash:  "TODO",
 	}
 }
 func fixNewRemoveInstanceOperation() *internal.InstanceOperation {
@@ -80,12 +80,15 @@ func fixNewRemoveInstanceOperation() *internal.InstanceOperation {
 		OperationID: fixOperationID(),
 		Type:        internal.OperationTypeRemove,
 		State:       internal.OperationStateInProgress,
-		ParamsHash:  "TODO",
 	}
 }
 
-func fixServiceID() string {
+func fixServiceID() internal.ServiceID {
 	return "service-id"
+}
+
+func fixAppServiceID() internal.ApplicationServiceID {
+	return internal.ApplicationServiceID(fixServiceID())
 }
 
 func fixPlanID() string {
@@ -95,19 +98,18 @@ func fixPlanID() string {
 func fixNewInstance() *internal.Instance {
 	return &internal.Instance{
 		ID:            fixInstanceID(),
-		Namespace:     internal.Namespace(fixNs()),
-		ServiceID:     internal.ServiceID(fixServiceID()),
+		Namespace:     fixNs(),
+		ServiceID:     fixServiceID(),
 		ServicePlanID: internal.ServicePlanID(fixPlanID()),
 		State:         internal.InstanceStatePending,
-		ParamsHash:    "TODO",
 	}
 }
 func fixProvisionRequest() *osb.ProvisionRequest {
 	return &osb.ProvisionRequest{
 		AcceptsIncomplete: true,
 		InstanceID:        string(fixInstanceID()),
-		Context:           map[string]interface{}{"namespace": fixNs()},
-		ServiceID:         fixServiceID(),
+		Context:           map[string]interface{}{"namespace": string(fixNs())},
+		ServiceID:         string(fixServiceID()),
 		PlanID:            fixPlanID(),
 	}
 }
@@ -116,7 +118,7 @@ func fixDeprovisionRequest() *osb.DeprovisionRequest {
 	return &osb.DeprovisionRequest{
 		AcceptsIncomplete: true,
 		InstanceID:        string(fixInstanceID()),
-		ServiceID:         fixServiceID(),
+		ServiceID:         string(fixServiceID()),
 		PlanID:            fixPlanID(),
 	}
 }
@@ -134,10 +136,10 @@ func fixAppName() internal.ApplicationName {
 }
 func FixServiceInstance() *v1beta1.ServiceInstance {
 	return &v1beta1.ServiceInstance{
-		ObjectMeta: metav1.ObjectMeta{
+		ObjectMeta: v1.ObjectMeta{
 			Name:      fixServiceInstanceName(),
 			UID:       fixServiceInstanceUID(),
-			Namespace: fixNs(),
+			Namespace: string(fixNs()),
 		},
 		Spec: v1beta1.ServiceInstanceSpec{
 			ExternalID: string(fixInstanceID()),
@@ -146,5 +148,23 @@ func FixServiceInstance() *v1beta1.ServiceInstance {
 }
 
 func fixError() error {
-	return errors.New("some erorr")
+	return errors.New("some error")
+}
+
+func fixProvisionSucceeded() *string {
+	s := internal.OperationDescriptionProvisioningSucceeded
+	return &s
+}
+
+func fixDeprovisionSucceeded() *string {
+	s := internal.OperationDescriptionDeprovisioningSucceeded
+	return &s
+}
+
+func fixDisplayName() string {
+	return "Orders"
+}
+
+func fixEventProvider() bool {
+	return true
 }

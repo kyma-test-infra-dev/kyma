@@ -12,14 +12,14 @@ import (
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlschema"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/module"
 	"github.com/pkg/errors"
-	"k8s.io/api/apps/v1beta2"
-	api "k8s.io/api/apps/v1beta2"
+	v1 "k8s.io/api/apps/v1"
 )
 
 //go:generate mockery -name=deploymentLister -output=automock -outpkg=automock -case=underscore
 type deploymentLister interface {
-	List(namespace string) ([]*api.Deployment, error)
-	ListWithoutFunctions(namespace string) ([]*api.Deployment, error)
+	List(namespace string) ([]*v1.Deployment, error)
+	ListWithoutFunctions(namespace string) ([]*v1.Deployment, error)
+	Find(name, namespace string) (*v1.Deployment, error)
 }
 
 type deploymentResolver struct {
@@ -38,7 +38,7 @@ func newDeploymentResolver(deploymentLister deploymentLister, scRetriever shared
 }
 
 func (r *deploymentResolver) DeploymentsQuery(ctx context.Context, namespace string, excludeFunctions *bool) ([]gqlschema.Deployment, error) {
-	var deployments []*v1beta2.Deployment
+	var deployments []*v1.Deployment
 	var err error
 	if excludeFunctions == nil || !*excludeFunctions {
 		deployments, err = r.deploymentLister.List(namespace)
@@ -65,7 +65,7 @@ func (r *deploymentResolver) DeploymentBoundServiceInstanceNamesField(ctx contex
 		kind = "function"
 	}
 
-	usages, err := r.scaRetriever.ServiceBindingUsage().ListForDeployment(deployment.Namespace, kind, deployment.Name)
+	usages, err := r.scaRetriever.ServiceBindingUsage().ListByUsageKind(deployment.Namespace, kind, deployment.Name)
 	if err != nil {
 		if module.IsDisabledModuleError(err) {
 			return nil, err
@@ -88,7 +88,7 @@ func (r *deploymentResolver) DeploymentBoundServiceInstanceNamesField(ctx contex
 		}
 
 		if binding != nil {
-			instanceNames[binding.Spec.ServiceInstanceRef.Name] = struct{}{}
+			instanceNames[binding.Spec.InstanceRef.Name] = struct{}{}
 		}
 	}
 

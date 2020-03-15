@@ -1,31 +1,226 @@
 global:
+  defaultTenant: 3e64ebae-38b5-46a0-b1ed-9ccee153a0ae
+  tenants:
+    - name: default
+      id: 3e64ebae-38b5-46a0-b1ed-9ccee153a0ae
+    - name: foo
+      id: 1eba80dd-8ff6-54ee-be4d-77944d17b10b
+    - name: bar
+      id: af9f84a9-1d3a-4d9f-ae0c-94f883b33b6e
+
   images:
     containerRegistry:
       path: eu.gcr.io/kyma-project/incubator
     connector:
-      dir: pr/
-      version: "PR-99"
+      dir:
+      version: "109f4dc2"
+    connectivity_adapter:
+      dir:
+      version: "28532e7d"
+    pairing_adapter:
+      dir:
+      version: "ffe1a7c3"
     director:
-      dir: pr/
-      version: "PR-100"
+      dir:
+      version: "f32c0dd8"
     gateway:
-      dir: pr/
-      version: "PR-100"
+      dir:
+      version: "109f4dc2"
     healthchecker:
-      dir: pr/
-      version: "PR-99"
+      dir:
+      version: "109f4dc2"
+    schema_migrator:
+      dir:
+      version: "712f4623"
+    provisioner:
+      dir:
+      version: "34587c75"
+    certs_setup_job:
+      containerRegistry:
+        path: eu.gcr.io/kyma-project
+      dir:
+      version: "0a651695"
+    kyma_environment_broker:
+      dir:
+      version: "34587c75"
     tests:
-      e2e:
-        dir: pr/
-        version: "PR-99"
+      director:
+        dir:
+        version: "f32c0dd8"
+      connector:
+        dir:
+        version: "9cebaf5c"
+      provisioner:
+        dir:
+        version: "34587c75"
+      e2e_provisioning:
+        dir:
+        version: "6b8099b5"
+      connectivity_adapter:
+        dir:
+        version: "28532e7d"
+  isLocalEnv: false
+  oauth2:
+    host: oauth2
+
+  agentPreconfiguration: true
 
   director:
     port: 3000
-  
+
+  tenantConfig:
+    useDefaultTenants: true
+    useExternalTenants: false
+
   connector:
+    graphql:
+      external:
+        port: 3000
+      internal:
+        port: 3001
+    validator:
+      port: 8080
+    # If secrets do not exist they will be created
+    secrets:
+      ca:
+        name: connector-service-app-ca
+        namespace: kyma-integration
+      rootCA:
+        name: kyma-gateway-certs
+        namespace: istio-system # For Ingress Gateway to work properly the namespace needs to be istio-system
+        cacert: kyma-gateway-certs-cacert # For cert-rotation the cacert should be in different secret
+    certificateDataHeader: "Certificate-Data"
+    revocation:
+      configmap:
+        shouldCreate: false
+        namespace: kyma-integration
+        name: revocations-config
+    # If key and certificate are not provided they will be generated
+    caKey: ""
+    caCertificate: ""
+
+  provisioning:
+    enabled: false
+
+  kyma_environment_broker:
+    secrets:
+      integrationSystemCredentials:
+        name: compass-kyma-environment-broker-credentials
+
+  provisioner:
+    graphql:
+      port: 3000
+    secrets:
+      integrationSystemCredentials:
+        name: compass-provisioner-credentials
+
+  gateway:
     port: 3000
+    tls:
+      host: compass-gateway
+      secure:
+        oauth:
+          host: compass-gateway-auth-oauth
+    mtls:
+      host: compass-gateway-mtls
+    headers:
+      request:
+        remove:
+          - "Client-Id-From-Token"
+          - "Client-Id-From-Certificate"
+          - "Client-Certificate-Hash"
+          - "Certificate-Data"
+
+  connectivity_adapter:
+    port: 8080
+    tls:
+      host: adapter-gateway
+    mtls:
+      host: adapter-gateway-mtls
+
+  rewriteFilters:
+    workloadLabel: oathkeeper
+    tokenDataHeader: "Connector-Token"
+    certificateDataHeader: "Certificate-Data"
 
   istio:
     gateway:
-      name: kyma-gateway
-      namespace: kyma-system
+      name: "kyma-gateway"
+      namespace: "kyma-system"
+
+  database:
+    manageSecrets: true
+    embedded:
+      enabled: true
+      directorDBName: "postgres"
+      provisionerDBName: "provisioner"
+      brokerDBName: "broker"
+    # Values for GCP managed PostgreSQL database
+    managedGCP:
+      serviceAccountKey: ""
+      instanceConnectionName: ""
+      dbUser: ""
+      dbPassword: ""
+      directorDBName: ""
+      provisionerDBName: ""
+      brokerDBName: ""
+      host: "localhost"
+      hostPort: "5432"
+      sslMode: ""
+
+  oathkeeper:
+    host: ory-oathkeeper-proxy.kyma-system.svc.cluster.local
+    port: 4455
+    idTokenConfig:
+      claims: '{"scopes": "{{ print .Extra.scope }}", "tenant": "{{ print .Extra.tenant }}", "consumerID": "{{ print .Extra.consumerID}}", "consumerType": "{{ print .Extra.consumerType }}"}'
+    mutators:
+      runtimeMappingService:
+        config:
+          api:
+            url: http://compass-director.compass-system.svc.cluster.local:3000/runtime-mapping
+            retry:
+              give_up_after: 3s
+              max_delay: 2000ms
+      tenantMappingService:
+        config:
+          api:
+            url: http://compass-director.compass-system.svc.cluster.local:3000/tenant-mapping
+            retry:
+              give_up_after: 3s
+              max_delay: 2000ms
+      certificateResolverService:
+        config:
+          api:
+            url: http://compass-connector.compass-system.svc.cluster.local:8080/v1/certificate/data/resolve
+            retry:
+              give_up_after: 3s
+              max_delay: 2000ms
+      tokenResolverService:
+        config:
+          api:
+            url: http://compass-connector.compass-system.svc.cluster.local:8080/v1/tokens/resolve
+            retry:
+              give_up_after: 3s
+              max_delay: 2000ms
+
+  tenantFetcher:
+    enabled: false
+    manageSecrets: true
+    providerName: "compass"
+    schedule: "*/5 * * * *"
+    oauth:
+      client: ""
+      secret: ""
+      tokenURL: ""
+    endpoints:
+      tenantCreated: "127.0.0.1/events?type=created"
+      tenantDeleted: "127.0.0.1/events?type=deleted"
+      tenantUpdated: "127.0.0.1/events?type=updated"
+    fieldMapping:
+      idField: "id"
+      nameField: "name"
+      discriminatorField: ""
+      discriminatorValue: ""
+
+pairing-adapter:
+  enabled: false

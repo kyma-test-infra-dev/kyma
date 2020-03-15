@@ -13,7 +13,7 @@ See the [GraphQL schema definition](internal/gqlschema/schema.graphql) file for 
 
 Use the following tools to set up the project:
 
-* [Go distribution](https://golang.org)
+* [Go](https://golang.org)
 * [Docker](https://www.docker.com/)
 
 ## Usage
@@ -23,7 +23,7 @@ Use the following tools to set up the project:
 To run the application without building the binary, run this command:
 
 ```bash
-APP_KUBECONFIG_PATH=/Users/$USER/.kube/config APP_VERBOSE=true APP_ASSET_STORE_ADDRESS=https://minio.{kymaDomain} APP_ASSET_STORE_VERIFY_SSL=false APP_APPLICATION_GATEWAY_INTEGRATION_NAMESPACE=kyma-integration APP_APPLICATION_CONNECTOR_URL=http://dummy.url APP_OIDC_ISSUER_URL=https://dex.{kymaDomain} APP_OIDC_CLIENT_ID=kyma-client go run main.go
+APP_KUBECONFIG_PATH=/Users/$USER/.kube/config APP_VERBOSE=true APP_RAFTER_ADDRESS=https://storage.{kymaDomain} APP_RAFTER_VERIFY_SSL=false APP_APPLICATION_GATEWAY_INTEGRATION_NAMESPACE=kyma-integration APP_APPLICATION_CONNECTOR_URL=http://dummy.url APP_OIDC_ISSUER_URL=https://dex.{kymaDomain} APP_OIDC_CLIENT_ID=kyma-client go run main.go
 ```
 
 For the descriptions of the available environment variables, see the [Configuration](./docs/configuration.md) document.
@@ -56,10 +56,13 @@ The variables are:
 * `{image_tag}` - tag of the output image (default: `latest`)
 
 ### Certificate error
+
 When you run the UI API Layer project, you can get the following error:
+
 ```bash
 oidc.go:222] oidc authenticator: initializing plugin: Get https://dex.kyma.local/.well-known/openid-configuration: x509: certificate signed by unknown authority
 ```
+
 This error can occur if you use Go version 1.11.5 or lower on macOS. Try upgrading to version 1.11.6 or higher. For details, see [this](https://github.com/golang/go/issues/24652) issue.
 
 ## Development
@@ -67,6 +70,7 @@ This error can occur if you use Go version 1.11.5 or lower on macOS. Try upgradi
 ### Install dependencies
 
 This project uses `dep` as a dependency manager. To install all required dependencies, use the following command:
+
 ```bash
 dep ensure -vendor-only
 ```
@@ -75,11 +79,11 @@ dep ensure -vendor-only
 
 This project uses the [GQLGen](https://github.com/99designs/gqlgen) library, which improves development by generating code from the [GraphQL schema definition](internal/gqlschema/schema.graphql).
 
-1.  Define types and their fields in `/internal/gqlschema/schema.graphql` using the [Schema Definition Language](http://graphql.org/learn/schema/).
-1.  Execute the `./gqlgen.sh` script to run the code generator.
-1.  Navigate to the `/internal/gqlschema/` directory.
-1.  Find newly generated methods in the `ResolverRoot` interface located in `./schema_gen.go`.
-1.  Implement resolvers in specific domains according to the project structure and rules in this guide. Use generated models from `./models_gen.go` in your business logic. If you want to customize them, move them to a new file in the `gqlschema` package and include in the `./config.yml` file.
+1. Define types and their fields in `/internal/gqlschema/schema.graphql` using the [Schema Definition Language](http://graphql.org/learn/schema/).
+1. Execute the `./gqlgen.sh` script to run the code generator.
+1. Navigate to the `/internal/gqlschema/` directory.
+1. Find newly generated methods in the `ResolverRoot` interface located in `./schema_gen.go`.
+1. Implement resolvers in specific domains according to the project structure and rules in this guide. Use generated models from `./models_gen.go` in your business logic. If you want to customize them, move them to a new file in the `gqlschema` package and include in the `./config.yml` file.
 
 To use advanced features, such as custom scalars, read the [documentation](https://gqlgen.com/) of the used library.
 
@@ -93,4 +97,6 @@ go test ./...
 
 ### Verify the code
 
-To check if the code is correct and you can push it, run the `before-commit.sh` script. It builds the application, runs tests, checks the status of the vendored libraries, runs the static code analysis, and ensures that the formatting of the code is correct.
+To check if the code is correct and you can push it, use the `make` command. It builds the application, runs tests, checks the status of the vendored libraries, runs the static code analysis, and checks if the formatting of the code is correct. 
+
+To automatically format the incorrect code, use the `make format` command.

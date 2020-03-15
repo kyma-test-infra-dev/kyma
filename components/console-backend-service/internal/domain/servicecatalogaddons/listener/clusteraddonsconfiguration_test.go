@@ -3,7 +3,7 @@ package listener
 import (
 	"testing"
 
-	"github.com/kyma-project/kyma/components/helm-broker/pkg/apis/addons/v1alpha1"
+	"github.com/kyma-project/helm-broker/pkg/apis/addons/v1alpha1"
 
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/servicecatalogaddons/listener/automock"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlschema"
@@ -17,7 +17,7 @@ func TestClusterAddonsConfiguration_OnAdd(t *testing.T) {
 		cfg := new(v1alpha1.ClusterAddonsConfiguration)
 		converter := automock.NewGQLClusterAddonsConfigurationConverter()
 
-		channel := make(chan gqlschema.AddonsConfigurationEvent, 1)
+		channel := make(chan gqlschema.ClusterAddonsConfigurationEvent, 1)
 		defer close(channel)
 		converter.On("ToGQL", cfg).Return(gqlAddonsConfiguration, nil).Once()
 		defer converter.AssertExpectations(t)
@@ -78,7 +78,7 @@ func TestClusterAddonsConfiguration_OnDelete(t *testing.T) {
 		serviceBroker := new(v1alpha1.ClusterAddonsConfiguration)
 		converter := automock.NewGQLClusterAddonsConfigurationConverter()
 
-		channel := make(chan gqlschema.AddonsConfigurationEvent, 1)
+		channel := make(chan gqlschema.ClusterAddonsConfigurationEvent, 1)
 		defer close(channel)
 		converter.On("ToGQL", serviceBroker).Return(gqlClusterServiceBroker, nil).Once()
 		defer converter.AssertExpectations(t)
@@ -137,17 +137,17 @@ func TestClusterAddonsConfiguration_OnUpdate(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		// given
 		gqlClusterServiceBroker := new(gqlschema.AddonsConfiguration)
-		configMap := new(v1alpha1.ClusterAddonsConfiguration)
+		cfg := new(v1alpha1.ClusterAddonsConfiguration)
 		converter := automock.NewGQLClusterAddonsConfigurationConverter()
 
-		channel := make(chan gqlschema.AddonsConfigurationEvent, 1)
+		channel := make(chan gqlschema.ClusterAddonsConfigurationEvent, 1)
 		defer close(channel)
-		converter.On("ToGQL", configMap).Return(gqlClusterServiceBroker, nil).Once()
+		converter.On("ToGQL", cfg).Return(gqlClusterServiceBroker, nil).Once()
 		defer converter.AssertExpectations(t)
 		serviceBrokerListener := NewClusterAddonsConfiguration(channel, filterClusterAddonsConfigurationTrue, converter)
 
 		// when
-		serviceBrokerListener.OnUpdate(configMap, configMap)
+		serviceBrokerListener.OnUpdate(cfg, cfg)
 		result := <-channel
 
 		// then

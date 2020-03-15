@@ -11,7 +11,7 @@ import (
 
 	"github.com/kyma-project/kyma/tests/application-registry-tests/test/testkit"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -20,13 +20,15 @@ const (
 )
 
 var (
+	headers = map[string][]string{
+		"headerKey": {"headerValue"},
+	}
+	queryParameters = map[string][]string{
+		"queryParameterKey": {"queryParameterValue"},
+	}
 	requestParameters = testkit.RequestParameters{
-		Headers: &map[string][]string{
-			"headerKey": []string{"headerValue"},
-		},
-		QueryParameters: &map[string][]string{
-			"queryParameterKey": []string{"queryParameterValue"},
-		},
+		Headers:         &headers,
+		QueryParameters: &queryParameters,
 	}
 )
 
@@ -45,26 +47,26 @@ func TestK8sResources(t *testing.T) {
 
 	metadataServiceClient := testkit.NewMetadataServiceClient(config.MetadataServiceUrl + "/" + dummyApp.Name + "/v1/metadata/services")
 
-	testWithOAuth := func(csrf *testkit.CSRFInfo, t *testing.T) {
+	defaultOAuthAPI := testkit.API{
+		TargetUrl: "http://service.com",
+		Credentials: &testkit.Credentials{
+			Oauth: &testkit.Oauth{
+				URL:          "http://oauth.com",
+				ClientID:     "clientId",
+				ClientSecret: "clientSecret",
+			},
+		},
+		Spec: testkit.ApiRawSpec,
+	}
+
+	testWithOAuth := func(api *testkit.API, t *testing.T) {
 
 		// setup
 		initialServiceDefinition := testkit.ServiceDetails{
 			Name:        "test service",
 			Provider:    "service provider",
 			Description: "service description",
-			Api: &testkit.API{
-				TargetUrl: "http://service.com",
-				Credentials: &testkit.Credentials{
-					Oauth: &testkit.Oauth{
-						URL:          "http://oauth.com",
-						ClientID:     "clientId",
-						ClientSecret: "clientSecret",
-						CSRFInfo:     csrf,
-					},
-				},
-				RequestParameters: &requestParameters,
-				Spec: testkit.ApiRawSpec,
-			},
+			Api:         api,
 		}
 
 		statusCode, postResponseData, err := metadataServiceClient.CreateService(t, initialServiceDefinition)
@@ -72,7 +74,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 		paramsSecretName := testkit.CreateParamsSecretName(resourceName)
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
@@ -92,6 +96,12 @@ func TestK8sResources(t *testing.T) {
 			require.NoError(t, err)
 
 			testkit.CheckK8sOAuthSecret(t, k8sSecret, resourceName, expectedLabels, "clientId", "clientSecret")
+
+			if api.Credentials.Oauth.RequestParameters != nil {
+				t.Run("should include OAuth request parameters in k8s secret with client credentials", func(t *testing.T) {
+					testkit.CheckK8sParamsSecret(t, k8sSecret, resourceName, expectedLabels, "headerKey", "headerValue", "queryParameterKey", "queryParameterValue")
+				})
+			}
 		})
 
 		t.Run("should create k8s secret with request parameters", func(t *testing.T) {
@@ -102,10 +112,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -116,10 +126,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should add service to application custom resource", func(t *testing.T) {
@@ -127,8 +137,8 @@ func TestK8sResources(t *testing.T) {
 			require.NoError(t, err)
 
 			expectedCSRF := "not used in this test run"
-			if csrf != nil {
-				expectedCSRF = csrf.TokenEndpointURL
+			if api.Credentials.Oauth.CSRFInfo != nil {
+				expectedCSRF = api.Credentials.Oauth.CSRFInfo.TokenEndpointURL
 			}
 
 			expectedServiceData := testkit.ServiceData{
@@ -147,40 +157,59 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	}
 
 	t.Run("when creating service only with OAuth API", func(t *testing.T) {
-		var csrfInfo *testkit.CSRFInfo = nil
-		testWithOAuth(csrfInfo, t)
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithOAuth(defaultOAuthAPI.WithRequestParameters(&requestParameters), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithOAuth(defaultOAuthAPI.WithHeadersAndQueryParameters(&headers, &queryParameters), t)
+		})
 	})
 
 	t.Run("when creating service only with OAuth API and CSRF", func(t *testing.T) {
 		csrfInfo := &testkit.CSRFInfo{TokenEndpointURL: "https://csrf.token.endpoint.org"}
-		testWithOAuth(csrfInfo, t)
+
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithOAuth(defaultOAuthAPI.WithRequestParameters(&requestParameters).WithCSRFInOAuth(csrfInfo), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithOAuth(defaultOAuthAPI.WithHeadersAndQueryParameters(&headers, &queryParameters).WithCSRFInOAuth(csrfInfo), t)
+		})
 	})
 
-	testWithBasicAuth := func(csrf *testkit.CSRFInfo, t *testing.T) {
+	t.Run("when creating service only with OAuth with request parameters API", func(t *testing.T) {
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithOAuth(defaultOAuthAPI.WithRequestParameters(&requestParameters).WithRequestParametersInOAuth(&requestParameters), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithOAuth(defaultOAuthAPI.WithHeadersAndQueryParameters(&headers, &queryParameters).WithRequestParametersInOAuth(&requestParameters), t)
+		})
+	})
+
+	defaultBasicAPI := testkit.API{
+		TargetUrl: "http://service.com",
+		Credentials: &testkit.Credentials{
+			Basic: &testkit.Basic{
+				Username: "username",
+				Password: "password",
+			},
+		},
+		Spec: testkit.ApiRawSpec,
+	}
+
+	testWithBasicAuth := func(api *testkit.API, t *testing.T) {
 
 		// setup
 		initialServiceDefinition := testkit.ServiceDetails{
 			Name:        "test service",
 			Provider:    "service provider",
 			Description: "service description",
-			Api: &testkit.API{
-				TargetUrl: "http://service.com",
-				Credentials: &testkit.Credentials{
-					Basic: &testkit.Basic{
-						Username: "username",
-						Password: "password",
-						CSRFInfo: csrf,
-					},
-				},
-				RequestParameters: &requestParameters,
-				Spec: testkit.ApiRawSpec,
-			},
+			Api:         api,
 		}
 
 		statusCode, postResponseData, err := metadataServiceClient.CreateService(t, initialServiceDefinition)
@@ -188,7 +217,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 		paramsSecretName := testkit.CreateParamsSecretName(resourceName)
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
@@ -218,10 +249,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -232,10 +263,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should add service to application custom resource", func(t *testing.T) {
@@ -243,8 +274,8 @@ func TestK8sResources(t *testing.T) {
 			require.NoError(t, err)
 
 			expectedCSRF := "not used in this test run"
-			if csrf != nil {
-				expectedCSRF = csrf.TokenEndpointURL
+			if api.Credentials.Basic.CSRFInfo != nil {
+				expectedCSRF = api.Credentials.Basic.CSRFInfo.TokenEndpointURL
 			}
 
 			expectedServiceData := testkit.ServiceData{
@@ -263,39 +294,48 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	}
 
 	t.Run("when creating service only with Basic Auth API", func(t *testing.T) {
-		var csrfInfo *testkit.CSRFInfo = nil
-		testWithBasicAuth(csrfInfo, t)
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithBasicAuth(defaultBasicAPI.WithRequestParameters(&requestParameters), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithBasicAuth(defaultBasicAPI.WithHeadersAndQueryParameters(&headers, &queryParameters), t)
+		})
 	})
 
 	t.Run("when creating service only with Basic Auth API and CSRF", func(t *testing.T) {
 		csrfInfo := &testkit.CSRFInfo{TokenEndpointURL: "https://csrf.token.endpoint.org"}
-		testWithBasicAuth(csrfInfo, t)
+
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithBasicAuth(defaultBasicAPI.WithRequestParameters(&requestParameters).WithCSRFInBasic(csrfInfo), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithBasicAuth(defaultBasicAPI.WithHeadersAndQueryParameters(&headers, &queryParameters).WithCSRFInBasic(csrfInfo), t)
+		})
 	})
 
-	testWithCertGen := func(csrf *testkit.CSRFInfo, t *testing.T) {
+	defaultCertificateGenAPI := testkit.API{
+		TargetUrl: "http://service.com",
+		Credentials: &testkit.Credentials{
+			CertificateGen: &testkit.CertificateGen{
+				CommonName: "commonName",
+			},
+		},
+		Spec: testkit.ApiRawSpec,
+	}
+
+	testWithCertGen := func(api *testkit.API, t *testing.T) {
 
 		// setup
 		initialServiceDefinition := testkit.ServiceDetails{
 			Name:        "test service",
 			Provider:    "service provider",
 			Description: "service description",
-			Api: &testkit.API{
-				TargetUrl: "http://service.com",
-				Credentials: &testkit.Credentials{
-					CertificateGen: &testkit.CertificateGen{
-						CommonName: "commonName",
-						CSRFInfo:   csrf,
-					},
-				},
-				RequestParameters: &requestParameters,
-				Spec: testkit.ApiRawSpec,
-			},
+			Api:         api,
 		}
 
 		statusCode, postResponseData, err := metadataServiceClient.CreateService(t, initialServiceDefinition)
@@ -303,7 +343,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 		paramsSecretName := testkit.CreateParamsSecretName(resourceName)
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
@@ -333,10 +375,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -347,10 +389,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should add service to application custom resource", func(t *testing.T) {
@@ -358,8 +400,8 @@ func TestK8sResources(t *testing.T) {
 			require.NoError(t, err)
 
 			expectedCSRF := "not used in this test run"
-			if csrf != nil {
-				expectedCSRF = csrf.TokenEndpointURL
+			if api.Credentials.CertificateGen.CSRFInfo != nil {
+				expectedCSRF = api.Credentials.CertificateGen.CSRFInfo.TokenEndpointURL
 			}
 
 			expectedServiceData := testkit.ServiceData{
@@ -378,19 +420,28 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	}
 
 	t.Run("when creating service only with CertificateGen API", func(t *testing.T) {
-		var csrfInfo *testkit.CSRFInfo = nil
-		testWithCertGen(csrfInfo, t)
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithCertGen(defaultCertificateGenAPI.WithRequestParameters(&requestParameters), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithCertGen(defaultCertificateGenAPI.WithHeadersAndQueryParameters(&headers, &queryParameters), t)
+		})
 	})
 
-	t.Run("when creating service only with CertificateGen API", func(t *testing.T) {
+	t.Run("when creating service only with CertificateGen API and CSRF", func(t *testing.T) {
 		csrfInfo := &testkit.CSRFInfo{TokenEndpointURL: "https://csrf.token.endpoint.org"}
-		testWithCertGen(csrfInfo, t)
+
+		t.Run("when current api with request parameters provided", func(t *testing.T) {
+			testWithCertGen(defaultCertificateGenAPI.WithRequestParameters(&requestParameters).WithCSRFInCertificateGen(csrfInfo), t)
+		})
+
+		t.Run("when deprecated api provided", func(t *testing.T) {
+			testWithCertGen(defaultCertificateGenAPI.WithHeadersAndQueryParameters(&headers, &queryParameters).WithCSRFInCertificateGen(csrfInfo), t)
+		})
 	})
 
 	t.Run("when creating service only with Events", func(t *testing.T) {
@@ -410,7 +461,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		time.Sleep(crPropagationWaitTime * time.Second)
 
@@ -428,7 +481,7 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should not create istio denier", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -440,7 +493,7 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should not create istio checknothing", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -460,9 +513,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when updating service and changing API plus adding Events", func(t *testing.T) {
@@ -490,7 +540,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
 
@@ -536,10 +588,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should preserve istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should preserve istio rule", func(t *testing.T) {
@@ -550,10 +602,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should preserve istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should update service inside application custom resource", func(t *testing.T) {
@@ -575,9 +627,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when updating service and removing API", func(t *testing.T) {
@@ -605,7 +654,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		updatedServiceDefinition := testkit.ServiceDetails{
 			Name:        "updated test service",
@@ -636,7 +687,7 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should remove istio denier", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -648,7 +699,7 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should remove istio checknothing", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -668,9 +719,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when updating service and adding OAuth API", func(t *testing.T) {
@@ -690,7 +738,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
 
@@ -733,10 +783,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -747,10 +797,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should update service inside application custom resource", func(t *testing.T) {
@@ -772,9 +822,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when updating service and adding Basic Auth API", func(t *testing.T) {
@@ -794,7 +841,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
 
@@ -836,10 +885,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -850,10 +899,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should update service inside application custom resource", func(t *testing.T) {
@@ -875,9 +924,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when updating service and adding CertificateGen API", func(t *testing.T) {
@@ -897,7 +943,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
 
@@ -938,10 +986,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -952,10 +1000,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should update service inside application custom resource", func(t *testing.T) {
@@ -977,9 +1025,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when updating service with CertificateGen API without changing CN", func(t *testing.T) {
@@ -1005,7 +1050,9 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		defer metadataServiceClient.DeleteService(t, serviceId)
+
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		expectedLabels := map[string]string{"app": dummyApp.Name, "serviceId": serviceId}
 
@@ -1058,10 +1105,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio denier", func(t *testing.T) {
-			denier, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			denier, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sIstioDenier(t, denier, resourceName, expectedLabels, 7, "Not allowed")
+			testkit.CheckK8sIstioHandler(t, denier, resourceName, expectedLabels, 7, "Not allowed")
 		})
 
 		t.Run("should create istio rule", func(t *testing.T) {
@@ -1072,10 +1119,10 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should create istio checknothing", func(t *testing.T) {
-			checknothing, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			checknothing, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.NoError(t, err)
 
-			testkit.CheckK8sChecknothing(t, checknothing, resourceName, expectedLabels)
+			testkit.CheckK8sIstioInstance(t, checknothing, resourceName, expectedLabels)
 		})
 
 		t.Run("should update service inside application custom resource", func(t *testing.T) {
@@ -1097,9 +1144,6 @@ func TestK8sResources(t *testing.T) {
 
 			testkit.CheckK8sApplication(t, application, dummyApp.Name, expectedServiceData)
 		})
-
-		// clean up
-		metadataServiceClient.DeleteService(t, serviceId)
 	})
 
 	t.Run("when deleting service", func(t *testing.T) {
@@ -1130,7 +1174,7 @@ func TestK8sResources(t *testing.T) {
 		require.Equal(t, http.StatusOK, statusCode)
 
 		serviceId := postResponseData.ID
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		resourceName := dummyApp.Name + "-" + serviceId
 
 		statusCode, err = metadataServiceClient.DeleteService(t, serviceId)
 		require.NoError(t, err)
@@ -1152,7 +1196,7 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should remove istio denier", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -1164,7 +1208,7 @@ func TestK8sResources(t *testing.T) {
 		})
 
 		t.Run("should remove istio checknothing", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -1211,7 +1255,7 @@ func TestK8sApplicationDeletion(t *testing.T) {
 					},
 				},
 				RequestParameters: &requestParameters,
-				Spec: testkit.ApiRawSpec,
+				Spec:              testkit.ApiRawSpec,
 			},
 			Events: &testkit.Events{
 				Spec: testkit.EventsRawSpec,
@@ -1225,7 +1269,7 @@ func TestK8sApplicationDeletion(t *testing.T) {
 		serviceId := postResponseData.ID
 		defer metadataServiceClient.DeleteService(t, serviceId)
 
-		resourceName := "app-" + dummyApp.Name + "-" + serviceId
+		resourceName := dummyApp.Name + "-" + serviceId
 		paramsSecretName := testkit.CreateParamsSecretName(resourceName)
 
 		//when
@@ -1254,7 +1298,7 @@ func TestK8sApplicationDeletion(t *testing.T) {
 		})
 
 		t.Run("should remove istio denier", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetDenier(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetHandler(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})
@@ -1266,7 +1310,7 @@ func TestK8sApplicationDeletion(t *testing.T) {
 		})
 
 		t.Run("should remove istio checknothing", func(t *testing.T) {
-			_, err := k8sResourcesClient.GetChecknothing(resourceName, v1.GetOptions{})
+			_, err := k8sResourcesClient.GetInstance(resourceName, v1.GetOptions{})
 			require.Error(t, err)
 			require.True(t, k8serrors.IsNotFound(err))
 		})

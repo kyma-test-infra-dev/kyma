@@ -1,18 +1,14 @@
-etcd-stateful:
-  replicaCount: 3
-  etcd:
-    resources:
-      limits:
-        memory: 512Mi
-
 global:
-  serviceCatalogApiserver:
-    enabled: true
-  serviceCatalogCrds:
-    enabled: false
   isLocalEnv: false
   containerRegistry:
     path: eu.gcr.io/kyma-project
   istio:
     gateway:
       name: kyma-gateway
+  acceptance_tests:
+    dir:
+    version: "0e4a64c1"
+test:
+  acceptance:
+    service_catalog:
+      enabled: true

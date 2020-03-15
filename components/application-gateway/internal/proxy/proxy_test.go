@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kyma-project/kyma/components/application-gateway/pkg/httpconsts"
+	"github.com/gorilla/mux"
+
+	proxy2 "github.com/kyma-project/kyma/components/application-gateway/pkg/proxyconfig"
+
+	"github.com/kyma-project/kyma/components/application-gateway/pkg/proxyconfig/mocks"
 
 	csrfMock "github.com/kyma-project/kyma/components/application-gateway/internal/csrf/mocks"
 	"github.com/kyma-project/kyma/components/application-gateway/internal/httperrors"
@@ -17,16 +22,157 @@ import (
 	"github.com/kyma-project/kyma/components/application-gateway/pkg/apperrors"
 	"github.com/kyma-project/kyma/components/application-gateway/pkg/authorization"
 	authMock "github.com/kyma-project/kyma/components/application-gateway/pkg/authorization/mocks"
+	"github.com/kyma-project/kyma/components/application-gateway/pkg/httpconsts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	secretName = "my-secret"
+	apiName    = "my-api"
 )
 
 func TestProxy(t *testing.T) {
 
 	proxyTimeout := 10
 
-	t.Run("should proxy and add addidtional query parameters", func(t *testing.T) {
+	t.Run("should proxy without escaping the URL path characters when target URL does not contain path", func(t *testing.T) {
+		// given
+		ts := NewTestServer(func(req *http.Request) {
+			assert.Equal(t, "/somepath/Xyz('123')", req.URL.String())
+		})
+		defer ts.Close()
+
+		req, err := http.NewRequest(http.MethodGet, "/somepath/Xyz('123')", nil)
+		require.NoError(t, err)
+
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
+
+		authStrategyMock := &authMock.Strategy{}
+		authStrategyMock.
+			On("AddAuthorization", mock.AnythingOfType("*http.Request"), mock.AnythingOfType("TransportSetter")).
+			Return(nil).
+			Once()
+
+		credentials := &authorization.Credentials{}
+		authStrategyFactoryMock := &authMock.StrategyFactory{}
+		authStrategyFactoryMock.On("Create", credentials).Return(authStrategyMock).Once()
+
+		csrfFactoryMock, csrfStrategyMock := mockCSRFStrategy(authStrategyMock, calledOnce)
+
+		serviceDefServiceMock := &metadataMock.ServiceDefinitionService{}
+		serviceDefServiceMock.On("GetAPI", "uuid-1").Return(&metadatamodel.API{
+			TargetUrl:   ts.URL,
+			Credentials: credentials,
+		}, nil).Once()
+
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
+		rr := httptest.NewRecorder()
+
+		// when
+		handler.ServeHTTP(rr, req)
+
+		// then
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "test", rr.Body.String())
+		authStrategyFactoryMock.AssertExpectations(t)
+		authStrategyMock.AssertExpectations(t)
+		csrfFactoryMock.AssertExpectations(t)
+		csrfStrategyMock.AssertExpectations(t)
+	})
+
+	t.Run("should proxy without escaping the URL path characters when target URL contains path", func(t *testing.T) {
+		// given
+		ts := NewTestServer(func(req *http.Request) {
+			assert.Equal(t, "/somepath/Xyz('123')", req.URL.String())
+		})
+		defer ts.Close()
+
+		req, err := http.NewRequest(http.MethodGet, "/Xyz('123')", nil)
+		require.NoError(t, err)
+
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
+
+		authStrategyMock := &authMock.Strategy{}
+		authStrategyMock.
+			On("AddAuthorization", mock.AnythingOfType("*http.Request"), mock.AnythingOfType("TransportSetter")).
+			Return(nil).
+			Once()
+
+		credentials := &authorization.Credentials{}
+		authStrategyFactoryMock := &authMock.StrategyFactory{}
+		authStrategyFactoryMock.On("Create", credentials).Return(authStrategyMock).Once()
+
+		csrfFactoryMock, csrfStrategyMock := mockCSRFStrategy(authStrategyMock, calledOnce)
+
+		serviceDefServiceMock := &metadataMock.ServiceDefinitionService{}
+		serviceDefServiceMock.On("GetAPI", "uuid-1").Return(&metadatamodel.API{
+			TargetUrl:   ts.URL + "/somepath",
+			Credentials: credentials,
+		}, nil).Once()
+
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
+		rr := httptest.NewRecorder()
+
+		// when
+		handler.ServeHTTP(rr, req)
+
+		// then
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "test", rr.Body.String())
+		authStrategyFactoryMock.AssertExpectations(t)
+		authStrategyMock.AssertExpectations(t)
+		csrfFactoryMock.AssertExpectations(t)
+		csrfStrategyMock.AssertExpectations(t)
+	})
+
+	t.Run("should proxy without escaping the URL path characters when target URL contains full path", func(t *testing.T) {
+		// given
+		ts := NewTestServer(func(req *http.Request) {
+			assert.Equal(t, "/somepath/Xyz('123')?$search=XXX", req.URL.String())
+		})
+		defer ts.Close()
+
+		req, err := http.NewRequest(http.MethodGet, "?$search=XXX", nil)
+		require.NoError(t, err)
+
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
+
+		authStrategyMock := &authMock.Strategy{}
+		authStrategyMock.
+			On("AddAuthorization", mock.AnythingOfType("*http.Request"), mock.AnythingOfType("TransportSetter")).
+			Return(nil).
+			Once()
+
+		credentials := &authorization.Credentials{}
+		authStrategyFactoryMock := &authMock.StrategyFactory{}
+		authStrategyFactoryMock.On("Create", credentials).Return(authStrategyMock).Once()
+
+		csrfFactoryMock, csrfStrategyMock := mockCSRFStrategy(authStrategyMock, calledOnce)
+
+		serviceDefServiceMock := &metadataMock.ServiceDefinitionService{}
+		serviceDefServiceMock.On("GetAPI", "uuid-1").Return(&metadatamodel.API{
+			TargetUrl:   ts.URL + "/somepath/Xyz('123')",
+			Credentials: credentials,
+		}, nil).Once()
+
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
+		rr := httptest.NewRecorder()
+
+		// when
+		handler.ServeHTTP(rr, req)
+
+		// then
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "test", rr.Body.String())
+		authStrategyFactoryMock.AssertExpectations(t)
+		authStrategyMock.AssertExpectations(t)
+		csrfFactoryMock.AssertExpectations(t)
+		csrfStrategyMock.AssertExpectations(t)
+	})
+
+	t.Run("should proxy and add additional query parameters", func(t *testing.T) {
 		// given
 		ts := NewTestServer(func(req *http.Request) {
 			assert.Equal(t, "param-value-1", req.URL.Query().Get("param1"))
@@ -41,7 +187,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 
 		authStrategyMock := &authMock.Strategy{}
 		authStrategyMock.
@@ -69,7 +215,7 @@ func TestProxy(t *testing.T) {
 			RequestParameters: requestParameters,
 		}, nil).Once()
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -99,7 +245,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 
 		authStrategyMock := &authMock.Strategy{}
 		authStrategyMock.
@@ -127,7 +273,7 @@ func TestProxy(t *testing.T) {
 			RequestParameters: requestParameters,
 		}, nil).Once()
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -155,7 +301,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 		req.Header.Set(httpconsts.HeaderXForwardedClientCert, "C=US;O=Example Organisation;CN=Test User 1")
 		req.Header.Set(httpconsts.HeaderXForwardedFor, "client")
 		req.Header.Set(httpconsts.HeaderXForwardedProto, "http")
@@ -179,7 +325,7 @@ func TestProxy(t *testing.T) {
 			Credentials: credentials,
 		}, nil).Once()
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -205,7 +351,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 
 		authStrategyMock := &authMock.Strategy{}
 		authStrategyMock.
@@ -225,7 +371,7 @@ func TestProxy(t *testing.T) {
 			Credentials: credentials,
 		}, nil).Once()
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -237,7 +383,7 @@ func TestProxy(t *testing.T) {
 
 		// given
 		nextReq, _ := http.NewRequest(http.MethodGet, "/orders/123", nil)
-		nextReq.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		nextReq.Host = "test-uuid-1.namespace.svc.cluster.local"
 		rr = httptest.NewRecorder()
 
 		//when
@@ -269,7 +415,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 
 		authStrategyMock := &authMock.Strategy{}
 		authStrategyMock.
@@ -295,7 +441,7 @@ func TestProxy(t *testing.T) {
 			},
 		}, nil)
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -322,7 +468,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 
 		authStrategyMock := &authMock.Strategy{}
 		authStrategyMock.
@@ -347,7 +493,7 @@ func TestProxy(t *testing.T) {
 			},
 		}, nil)
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -374,7 +520,7 @@ func TestProxy(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "/orders/123", nil)
 		require.NoError(t, err)
 
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 
 		authStrategyMock := &authMock.Strategy{}
 		authStrategyMock.
@@ -399,7 +545,7 @@ func TestProxy(t *testing.T) {
 			},
 		}, nil)
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -419,14 +565,14 @@ func TestProxy(t *testing.T) {
 		// given
 		req, err := http.NewRequest(http.MethodGet, "/", nil)
 		require.NoError(t, err)
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
 		rr := httptest.NewRecorder()
 
 		serviceDefServiceMock := &metadataMock.ServiceDefinitionService{}
 		serviceDefServiceMock.On("GetAPI", "uuid-1").
 			Return(&metadatamodel.API{}, apperrors.Internal("Failed to read services"))
 
-		handler := New(serviceDefServiceMock, nil, nil, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, nil, nil, createProxyConfig(proxyTimeout), nil)
 
 		// when
 		handler.ServeHTTP(rr, req)
@@ -444,13 +590,15 @@ func TestProxy(t *testing.T) {
 	testRetryOnAuthFailure := func(testServerConstructor func(check func(req *http.Request)) *httptest.Server, requestBody io.Reader, expectedStatusCode int, t *testing.T) {
 		// given
 		tsf := testServerConstructor(func(req *http.Request) {
+			assertCookie(t, req, "user-cookie", "user-cookie-value")
 			assert.Equal(t, req.Method, http.MethodGet)
 			assert.Equal(t, req.RequestURI, "/orders/123")
 		})
 		defer tsf.Close()
 
 		req, _ := http.NewRequest(http.MethodGet, "/orders/123", requestBody)
-		req.Host = "app-test-uuid-1.namespace.svc.cluster.local"
+		req.Host = "test-uuid-1.namespace.svc.cluster.local"
+		req.AddCookie(&http.Cookie{Name: "user-cookie", Value: "user-cookie-value"})
 
 		serviceDefServiceMock := &metadataMock.ServiceDefinitionService{}
 		serviceDefServiceMock.On("GetAPI", "uuid-1").Return(&metadatamodel.API{
@@ -474,7 +622,7 @@ func TestProxy(t *testing.T) {
 		csrfTokenStrategyFactoryMock := &csrfMock.TokenStrategyFactory{}
 		csrfTokenStrategyFactoryMock.On("Create", authStrategyMock, "").Return(csrfTokenStrategyMock).Twice()
 
-		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfTokenStrategyFactoryMock, createProxyConfig(proxyTimeout))
+		handler := New(serviceDefServiceMock, authStrategyFactoryMock, csrfTokenStrategyFactoryMock, createProxyConfig(proxyTimeout), nil)
 		rr := httptest.NewRecorder()
 
 		// when
@@ -517,6 +665,13 @@ func TestProxy(t *testing.T) {
 	})
 }
 
+func assertCookie(t *testing.T, r *http.Request, name, value string) {
+	cookie, err := r.Cookie(name)
+	require.NoError(t, err)
+
+	assert.Equal(t, value, cookie.Value)
+}
+
 func TestInvalidStateHandler(t *testing.T) {
 	t.Run("should always return Internal Server Error", func(t *testing.T) {
 		// given
@@ -538,6 +693,107 @@ func TestInvalidStateHandler(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, rr.Code)
 		assert.Equal(t, http.StatusInternalServerError, errorResponse.Code)
 	})
+}
+
+func TestServeHTTPNamespaced(t *testing.T) {
+
+	proxyTimeout := 10
+	emptyRequestParams := &authorization.RequestParameters{
+		Headers:         nil,
+		QueryParameters: nil,
+	}
+
+	t.Run("should proxy without escaping the URL path characters when target URL does not contain path", func(t *testing.T) {
+		// given
+		ts := NewTestServer(func(req *http.Request) {
+			assert.Equal(t, "/somepath/Xyz('123')", req.URL.String())
+		})
+		defer ts.Close()
+
+		req, err := http.NewRequest(http.MethodGet, "/secret/"+secretName+"/api/"+apiName+"/somepath/Xyz('123')", nil)
+		require.NoError(t, err)
+		req = mux.SetURLVars(req, map[string]string{"secret": secretName, "apiName": apiName})
+
+		authStrategyMock := &authMock.Strategy{}
+		authStrategyMock.
+			On("AddAuthorization", mock.AnythingOfType("*http.Request"), mock.AnythingOfType("TransportSetter")).
+			Return(nil).
+			Once()
+
+		credentials := &authorization.Credentials{OAuth: &authorization.OAuth{RequestParameters: emptyRequestParams}}
+		authStrategyFactoryMock := &authMock.StrategyFactory{}
+		authStrategyFactoryMock.On("Create", credentials).Return(authStrategyMock).Once()
+
+		csrfFactoryMock, csrfStrategyMock := mockCSRFStrategy(authStrategyMock, calledOnce)
+
+		targetConfig := proxy2.ProxyDestinationConfig{
+			TargetURL: ts.URL,
+			Configuration: proxy2.Configuration{
+				Credentials: &proxy2.OauthConfig{},
+			},
+		}
+		targetConfigProvider := &mocks.TargetConfigProvider{}
+		targetConfigProvider.On("GetDestinationConfig", secretName, apiName).Return(targetConfig, nil)
+
+		handler := New(nil, authStrategyFactoryMock, csrfFactoryMock, createProxyConfig(proxyTimeout), targetConfigProvider)
+		rr := httptest.NewRecorder()
+
+		// when
+		handler.ServeHTTPNamespaced(rr, req)
+
+		// then
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "test", rr.Body.String())
+		authStrategyFactoryMock.AssertExpectations(t)
+		authStrategyMock.AssertExpectations(t)
+		csrfFactoryMock.AssertExpectations(t)
+		csrfStrategyMock.AssertExpectations(t)
+		targetConfigProvider.AssertExpectations(t)
+	})
+
+}
+
+func TestProxy_ServeHTTPNamespaced_ParamsError(t *testing.T) {
+	for _, testCase := range []struct {
+		description string
+		vars        map[string]string
+		errMsg      string
+	}{
+		{
+			description: "when api name not provided",
+			vars:        map[string]string{"secret": secretName},
+			errMsg:      "API name not specified",
+		},
+		{
+			description: "when api name not provided",
+			vars:        map[string]string{},
+			errMsg:      "secret name not specified",
+		},
+	} {
+		t.Run(testCase.description, func(t *testing.T) {
+			// given
+			ts := NewTestServer(func(req *http.Request) {
+				assert.Equal(t, "/somepath/Xyz('123')", req.URL.String())
+			})
+			defer ts.Close()
+
+			req, err := http.NewRequest(http.MethodGet, "/secret/"+secretName+"/api/"+apiName+"/somepath/Xyz('123')", nil)
+			require.NoError(t, err)
+			req = mux.SetURLVars(req, testCase.vars)
+
+			handler := New(nil, nil, nil, Config{}, nil)
+			rr := httptest.NewRecorder()
+
+			// when
+			handler.ServeHTTPNamespaced(rr, req)
+
+			// then
+			assert.Equal(t, http.StatusBadRequest, rr.Code)
+
+			errResp := readErrorResponse(t, rr.Body)
+			assert.Contains(t, errResp.Error, testCase.errMsg)
+		})
+	}
 }
 
 func NewTestServer(check func(req *http.Request)) *httptest.Server {
@@ -619,4 +875,15 @@ func calledTwice(mockCall *mock.Call) {
 
 func calledOnce(mockCall *mock.Call) {
 	mockCall.Once()
+}
+
+func readErrorResponse(t *testing.T, body io.Reader) httperrors.ErrorResponse {
+	responseBody, err := ioutil.ReadAll(body)
+	require.NoError(t, err)
+
+	var errorResponse httperrors.ErrorResponse
+	err = json.Unmarshal(responseBody, &errorResponse)
+	require.NoError(t, err)
+
+	return errorResponse
 }

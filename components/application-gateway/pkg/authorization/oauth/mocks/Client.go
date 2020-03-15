@@ -10,20 +10,20 @@ type Client struct {
 	mock.Mock
 }
 
-// GetToken provides a mock function with given fields: clientID, clientSecret, authURL
-func (_m *Client) GetToken(clientID string, clientSecret string, authURL string) (string, apperrors.AppError) {
-	ret := _m.Called(clientID, clientSecret, authURL)
+// GetToken provides a mock function with given fields: clientID, clientSecret, authURL, headers, queryParameters
+func (_m *Client) GetToken(clientID string, clientSecret string, authURL string, headers *map[string][]string, queryParameters *map[string][]string) (string, apperrors.AppError) {
+	ret := _m.Called(clientID, clientSecret, authURL, headers, queryParameters)
 
 	var r0 string
-	if rf, ok := ret.Get(0).(func(string, string, string) string); ok {
-		r0 = rf(clientID, clientSecret, authURL)
+	if rf, ok := ret.Get(0).(func(string, string, string, *map[string][]string, *map[string][]string) string); ok {
+		r0 = rf(clientID, clientSecret, authURL, headers, queryParameters)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
 	var r1 apperrors.AppError
-	if rf, ok := ret.Get(1).(func(string, string, string) apperrors.AppError); ok {
-		r1 = rf(clientID, clientSecret, authURL)
+	if rf, ok := ret.Get(1).(func(string, string, string, *map[string][]string, *map[string][]string) apperrors.AppError); ok {
+		r1 = rf(clientID, clientSecret, authURL, headers, queryParameters)
 	} else {
 		if ret.Get(1) != nil {
 			r1 = ret.Get(1).(apperrors.AppError)
@@ -33,20 +33,20 @@ func (_m *Client) GetToken(clientID string, clientSecret string, authURL string)
 	return r0, r1
 }
 
-// InvalidateAndRetry provides a mock function with given fields: clientID, clientSecret, authURL
-func (_m *Client) InvalidateAndRetry(clientID string, clientSecret string, authURL string) (string, apperrors.AppError) {
-	ret := _m.Called(clientID, clientSecret, authURL)
+// InvalidateAndRetry provides a mock function with given fields: clientID, clientSecret, authURL, headers, queryParameters
+func (_m *Client) InvalidateAndRetry(clientID string, clientSecret string, authURL string, headers *map[string][]string, queryParameters *map[string][]string) (string, apperrors.AppError) {
+	ret := _m.Called(clientID, clientSecret, authURL, headers, queryParameters)
 
 	var r0 string
-	if rf, ok := ret.Get(0).(func(string, string, string) string); ok {
-		r0 = rf(clientID, clientSecret, authURL)
+	if rf, ok := ret.Get(0).(func(string, string, string, *map[string][]string, *map[string][]string) string); ok {
+		r0 = rf(clientID, clientSecret, authURL, headers, queryParameters)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
 	var r1 apperrors.AppError
-	if rf, ok := ret.Get(1).(func(string, string, string) apperrors.AppError); ok {
-		r1 = rf(clientID, clientSecret, authURL)
+	if rf, ok := ret.Get(1).(func(string, string, string, *map[string][]string, *map[string][]string) apperrors.AppError); ok {
+		r1 = rf(clientID, clientSecret, authURL, headers, queryParameters)
 	} else {
 		if ret.Get(1) != nil {
 			r1 = ret.Get(1).(apperrors.AppError)

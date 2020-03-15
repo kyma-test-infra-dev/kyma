@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/client"
-	"github.com/kyma-project/kyma/tests/console-backend-service/internal/dex"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared/auth"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/graphql"
 	"github.com/kyma-project/kyma/tests/console-backend-service/pkg/retrier"
@@ -23,8 +22,7 @@ import (
 )
 
 const (
-	replicaSetName      = "test-replicaset"
-	replicaSetNamespace = "console-backend-service-replicaset"
+	replicaSetName = "test-replicaset"
 )
 
 type replicaSetQueryResponse struct {
@@ -54,34 +52,19 @@ type replicaSet struct {
 }
 
 func TestReplicaSet(t *testing.T) {
-	dex.SkipTestIfSCIEnabled(t)
-
 	c, err := graphql.New()
 	require.NoError(t, err)
 
-	k8sClient, _, err := client.NewClientWithConfig()
-	require.NoError(t, err)
-
 	appsV1Client, _, err := client.NewAppsClientWithConfig()
-
-	t.Log("Creating namespace...")
-	_, err = k8sClient.Namespaces().Create(fixNamespace(replicaSetNamespace))
 	require.NoError(t, err)
-
-	defer func() {
-		t.Log("Deleting namespace...")
-		err = k8sClient.Namespaces().Delete(replicaSetNamespace, &metav1.DeleteOptions{})
-		require.NoError(t, err)
-	}()
 
 	t.Log("Creating replicaSet...")
-
-	_, err = appsV1Client.ReplicaSets(replicaSetNamespace).Create(fixReplicaSet(replicaSetName, replicaSetNamespace))
+	_, err = appsV1Client.ReplicaSets(testNamespace).Create(fixReplicaSet(replicaSetName, testNamespace))
 	require.NoError(t, err)
 
 	t.Log("Retrieving replicaSet...")
 	err = waiter.WaitAtMost(func() (bool, error) {
-		_, err := appsV1Client.ReplicaSets(replicaSetNamespace).Get(replicaSetName, metav1.GetOptions{})
+		_, err := appsV1Client.ReplicaSets(testNamespace).Get(replicaSetName, metav1.GetOptions{})
 		if err == nil {
 			return true, nil
 		}
@@ -94,14 +77,14 @@ func TestReplicaSet(t *testing.T) {
 	err = c.Do(fixReplicaSetQuery(), &replicaSetRes)
 	require.NoError(t, err)
 	assert.Equal(t, replicaSetName, replicaSetRes.ReplicaSet.Name)
-	assert.Equal(t, replicaSetNamespace, replicaSetRes.ReplicaSet.Namespace)
+	assert.Equal(t, testNamespace, replicaSetRes.ReplicaSet.Namespace)
 
 	t.Log("Querying for replicaSets...")
 	var replicaSetsRes replicaSetsQueryResponse
 	err = c.Do(fixReplicaSetsQuery(), &replicaSetsRes)
 	require.NoError(t, err)
 	assert.Equal(t, replicaSetName, replicaSetsRes.ReplicaSets[0].Name)
-	assert.Equal(t, replicaSetNamespace, replicaSetsRes.ReplicaSets[0].Namespace)
+	assert.Equal(t, testNamespace, replicaSetsRes.ReplicaSets[0].Namespace)
 
 	t.Log("Updating...")
 	var updateRes updateReplicaSetMutationResponse
@@ -123,18 +106,18 @@ func TestReplicaSet(t *testing.T) {
 	}, retrier.UpdateRetries)
 	require.NoError(t, err)
 	assert.Equal(t, replicaSetName, updateRes.UpdateReplicaSet.Name)
-	assert.Equal(t, replicaSetNamespace, updateRes.UpdateReplicaSet.Namespace)
+	assert.Equal(t, testNamespace, updateRes.UpdateReplicaSet.Namespace)
 
 	t.Log("Deleting replicaSet...")
 	var deleteRes deleteReplicaSetMutationResponse
 	err = c.Do(fixDeleteReplicaSetMutation(), &deleteRes)
 	require.NoError(t, err)
 	assert.Equal(t, replicaSetName, deleteRes.DeleteReplicaSet.Name)
-	assert.Equal(t, replicaSetNamespace, deleteRes.DeleteReplicaSet.Namespace)
+	assert.Equal(t, testNamespace, deleteRes.DeleteReplicaSet.Namespace)
 
 	t.Log("Waiting for deletion...")
 	err = waiter.WaitAtMost(func() (bool, error) {
-		_, err := appsV1Client.ReplicaSets(replicaSetNamespace).Get(replicaSetName, metav1.GetOptions{})
+		_, err := appsV1Client.ReplicaSets(testNamespace).Get(replicaSetName, metav1.GetOptions{})
 		if errors.IsNotFound(err) {
 			return true, nil
 		}
@@ -206,7 +189,7 @@ func fixReplicaSetQuery() *graphql.Request {
 			}`, queryAttributes)
 	req := graphql.NewRequest(query)
 	req.SetVar("name", replicaSetName)
-	req.SetVar("namespace", replicaSetNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }
@@ -219,7 +202,7 @@ func fixReplicaSetsQuery() *graphql.Request {
 				}
 			}`, queryAttributes)
 	req := graphql.NewRequest(query)
-	req.SetVar("namespace", replicaSetNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }
@@ -238,7 +221,7 @@ func fixUpdateReplicaSetMutation(replicaSet string) *graphql.Request {
 				}`
 	req := graphql.NewRequest(mutation)
 	req.SetVar("name", replicaSetName)
-	req.SetVar("namespace", replicaSetNamespace)
+	req.SetVar("namespace", testNamespace)
 	req.SetVar("replicaSet", replicaSet)
 
 	return req
@@ -258,7 +241,7 @@ func fixDeleteReplicaSetMutation() *graphql.Request {
 				}`
 	req := graphql.NewRequest(mutation)
 	req.SetVar("name", replicaSetName)
-	req.SetVar("namespace", replicaSetNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }

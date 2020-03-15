@@ -1,4 +1,5 @@
-apiVersion: extensions/v1beta1
+{{- if not .Values.global.deployGatewayOncePerNamespace }}
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-application-gateway
@@ -12,13 +13,17 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-application-gateway
+      release: {{ .Release.Name }}
   template:
     metadata:
       annotations:
         sidecar.istio.io/inject: "true"
       labels:
         app: {{ .Release.Name }}-application-gateway
-        release: {{ .Release.Name }}-application-gateway
+        release: {{ .Release.Name }}
     spec:
       serviceAccountName: {{.Release.Name }}-application-gateway
       containers:
@@ -53,8 +58,9 @@ spec:
             name: proxy-port
           - containerPort: {{ .Values.deployment.args.externalAPIPort }}
             name: http-api-port
+{{- end }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-event-service
@@ -68,6 +74,10 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-event-service
+      release: {{ .Release.Name }}
   template:
     metadata:
       annotations:
@@ -76,7 +86,7 @@ spec:
         app: {{ .Release.Name }}-event-service
         kyma-grafana: {{ .Values.eventService.deployment.labels.grafana }}
         kyma-alerts: {{ .Values.eventService.deployment.labels.alerts }}
-        release: {{ .Release.Name }}-event-service
+        release: {{ .Release.Name }}
     spec:
       serviceAccountName: {{.Release.Name }}-event-service
       containers:
@@ -86,6 +96,7 @@ spec:
         args:
         - "/eventservice"
         - "--externalAPIPort={{ .Values.eventService.deployment.args.externalAPIPort }}"
+        - "--eventMeshURL=http://{{ .Release.Name }}.{{ .Release.Namespace }}"
         - "--eventsTargetURLV1={{ .Values.eventService.deployment.args.eventsTargetURLV1 }}"
         - "--eventsTargetURLV2={{ .Values.eventService.deployment.args.eventsTargetURLV2 }}"
         - "--maxRequestSize={{ .Values.eventService.deployment.args.maxRequestSize }}"

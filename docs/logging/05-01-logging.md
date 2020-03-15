@@ -17,7 +17,7 @@ This table lists the configurable parameters, their descriptions, and default va
 |-----------|-------------|---------------|
 | **persistence.enabled** | Specifies whether you store logs on a persistent volume instead of a volatile mounted volume. | `true` |
 | **persistence.size** | Defines the size of the persistent volume. | `10Gi` |
-| **config.auth_enabled** | Specifies the authentication mechanism you use to access the logging service. Set it to `false` to use built-in Istio authentication, or to `true` to use the basic HTTP authentication instead.  | `false` |
+| **config.auth_enabled** | Authenticates the tenant sending the request to the logging service when Loki runs in the multi-tenant mode. Setting it to `true` requires authentication using the HTTP (`X-Scope-OrgID`) header. Since Kyma supports the single-tenant mode only, you must set this parameter to `false`. This way, Loki does not require the `X-Scope-OrgID` header and the tenant ID defaults to `fake`. | `false` |
 | **config.ingester.lifecycler.address** | Specifies the address of the lifecycler that coordinates distributed logging services. | `127.0.0.1` |
 | **config.ingester.lifecycler.ring.store** | Specifies the storage for information on logging data and their copies. | `inmemory` |
 | **config.ingester.lifecycler.ring.replication_factor** | Specifies the number of data copies on separate storages. | `1` |
@@ -29,6 +29,5 @@ This table lists the configurable parameters, their descriptions, and default va
 | **config.schema_configs.index.period** | Defines how long indexes and log chunks are retained. | `168h` |
 | **config.storage_config.boltdb.directory** | Specifies the physical location of indexes in `boltdb`. | `/data/loki/index` |
 | **config.storage_config.filesystem.directory** | Specifies the physical location of log chunks in `filesystem`. | `/data/loki/chunks` |
-
 
 >**NOTE:** The Loki storage configuration consists of the **schema_config** and **storage_config** definitions. Use **schema_config** to define the storage types and **storage_config** to configure storage types that are already defined.

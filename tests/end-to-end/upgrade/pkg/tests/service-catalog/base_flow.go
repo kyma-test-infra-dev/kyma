@@ -179,7 +179,7 @@ func (f *baseFlow) wait(timeout time.Duration, conditionFunc wait.ConditionFunc)
 			close(stopCh)
 		}
 	}()
-	return wait.PollUntil(500*time.Millisecond, conditionFunc, stopCh)
+	return wait.PollUntil(time.Second, conditionFunc, stopCh)
 }
 
 func (f *baseFlow) waitForEnvInjected(svc, expectedEnvName, expectedEnvValue string) error {
@@ -252,7 +252,7 @@ func (f *baseFlow) waitForEnvTesterValue(svc, expectedEnvName, expectedEnvValue 
 }
 
 func (f *baseFlow) waitForInstance(name string) error {
-	return f.wait(2*time.Minute, func() (done bool, err error) {
+	return f.wait(5*time.Minute, func() (done bool, err error) {
 		si, err := f.scInterface.ServicecatalogV1beta1().ServiceInstances(f.namespace).Get(name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -264,23 +264,37 @@ func (f *baseFlow) waitForInstance(name string) error {
 	})
 }
 
+func (f *baseFlow) waitForInstanceFail(name string) error {
+	return f.wait(3*time.Minute, func() (done bool, err error) {
+		si, err := f.scInterface.ServicecatalogV1beta1().ServiceInstances(f.namespace).Get(name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		for _, cond := range si.Status.Conditions {
+			if cond.Status == v1beta1.ConditionFalse && cond.Type == v1beta1.ServiceInstanceConditionReady && cond.Reason == "ProvisionCallFailed" {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+}
+
 func (f *baseFlow) waitForInstanceRemoved(name string) error {
 	f.log.Infof("Waiting for %s instance to be removed", name)
-	return f.wait(2*time.Minute, func() (bool, error) {
+	return f.wait(3*time.Minute, func() (bool, error) {
 		_, err := f.scInterface.ServicecatalogV1beta1().ServiceInstances(f.namespace).Get(name, metav1.GetOptions{})
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
 			}
 			f.log.Warnf(err.Error())
-			return false, err
 		}
 		return false, nil
 	})
 }
 
 func (f *baseFlow) waitForDeployment(name string) error {
-	return f.wait(30*time.Second, func() (done bool, err error) {
+	return f.wait(time.Minute, func() (done bool, err error) {
 		deploy, err := f.k8sInterface.AppsV1().Deployments(f.namespace).Get(name, metav1.GetOptions{})
 		if err != nil {
 			return false, err

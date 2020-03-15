@@ -1,0 +1,11 @@
+{{- if .Values.loki.enabled }}
+apiVersion: ui.kyma-project.io/v1alpha1
+kind: BackendModule
+metadata:
+  name: {{ template "loki.fullname" . }}
+  labels:
+    app: {{ template "loki.name" . }}
+    chart: {{ template "loki.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+{{- end }}

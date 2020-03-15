@@ -1,2 +1,21 @@
 global:
   isLocalEnv: false
+
+knative-eventing:
+  tracing:
+    enable: true
+    ## Using v2 endpoint for zipkin to get the service name in the span.
+    collectorUrl: http://zipkin.kyma-system.svc.cluster.local:9411/api/v2/spans
+    ## Sample rate is configured in istio-pilot which drives the overall sampling decision hence setting it to zero.
+    sampleRate: 0
+  channel:
+    default:
+      # default channel to Natss
+      apiVersion: messaging.knative.dev/v1alpha1
+      kind: NatssChannel
+
+# PodMonitorSelector is configured here: resources/monitoring/templates/prometheus/prometheus.yaml
+event-mesh-dashboard:
+  podmonitor:
+    labels:
+      release: monitoring

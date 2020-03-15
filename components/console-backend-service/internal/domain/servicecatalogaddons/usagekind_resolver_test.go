@@ -1,10 +1,11 @@
-package servicecatalogaddons
+package servicecatalogaddons_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/servicecatalogaddons"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/servicecatalogaddons/automock"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlschema"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/pager"
@@ -18,12 +19,21 @@ import (
 
 func TestUsageKindResolver_ListUsageKinds(t *testing.T) {
 	// GIVEN
-	usageKindA := fixUsageKind("fix-A")
-	usageKindB := fixUsageKind("fix-B")
+	resourceRef := fixKubelessFunctionResourceReference()
+	usageKindA := fixUsageKind("fix-A", resourceRef)
+	usageKindB := fixUsageKind("fix-B", resourceRef)
+	usageKinds := []*v1alpha1.UsageKind{
+		usageKindA,
+		usageKindB,
+	}
+	gqlUsageKinds := []gqlschema.UsageKind{
+		*fixUsageKindGQL("fix-A", resourceRef),
+		*fixUsageKindGQL("fix-B", resourceRef),
+	}
 
 	svc := automock.NewUsageKindServices()
 	svc.On("List", pager.PagingParams{}).
-		Return(fixUsageKindsList(), nil).
+		Return(usageKinds, nil).
 		Once()
 	defer svc.AssertExpectations(t)
 
@@ -32,26 +42,12 @@ func TestUsageKindResolver_ListUsageKinds(t *testing.T) {
 
 	informer := informerFactory.Servicecatalog().V1alpha1().UsageKinds().Informer()
 	testingUtils.WaitForInformerStartAtMost(t, time.Second, informer)
-	resolver := newUsageKindResolver(svc)
+	resolver := servicecatalogaddons.NewUsageKindResolver(svc)
 
 	// WHEN
 	resp, err := resolver.ListUsageKinds(context.Background(), nil, nil)
 
 	// THEN
 	require.NoError(t, err)
-	assert.Equal(t, fixUsageKindsListGQL(), resp)
-}
-
-func fixUsageKindsList() []*v1alpha1.UsageKind {
-	return []*v1alpha1.UsageKind{
-		fixUsageKind("fix-A"),
-		fixUsageKind("fix-B"),
-	}
-}
-
-func fixUsageKindsListGQL() []gqlschema.UsageKind {
-	return []gqlschema.UsageKind{
-		*fixUsageKindGQL("fix-A"),
-		*fixUsageKindGQL("fix-B"),
-	}
+	assert.Equal(t, gqlUsageKinds, resp)
 }

@@ -25,12 +25,20 @@
 #   unused-packages = true
 
 required = [
-  "golang.org/x/tools/cmd/goimports"
+  "golang.org/x/tools/cmd/goimports",
+  "k8s.io/api",
+  "github.com/prometheus/client_golang/prometheus",
+  "github.com/prometheus/client_golang/prometheus/promauto",
+  "github.com/prometheus/client_golang/prometheus/promhttp"
 ]
 
 [[constraint]]
-  branch = "master"
   name = "github.com/golang/glog"
+  branch = "master"
+
+[[constraint]]
+  name = "github.com/howeyc/fsnotify"
+  version = "0.9.0"
 
 [[constraint]]
   name = "github.com/spf13/pflag"
@@ -41,16 +49,24 @@ required = [
   version = "2.2.1"
 
 [[constraint]]
+  name = "k8s.io/api"
+  version = "kubernetes-1.15.3"
+
+[[constraint]]
   name = "k8s.io/apiserver"
-  version = "kubernetes-1.11.0"
+  version = "kubernetes-1.15.3"
 
 [[constraint]]
   name = "k8s.io/apimachinery"
-  version = "kubernetes-1.11.0"
+  version = "kubernetes-1.15.3"
 
 [[constraint]]
   name = "k8s.io/client-go"
-  version = "kubernetes-1.11.0"
+  version = "kubernetes-1.15.3"
+
+[[constraint]]
+  name = "k8s.io/component-base"
+  version = "kubernetes-1.15.3"
 
 [[constraint]]
   name = "github.com/gorilla/handlers"

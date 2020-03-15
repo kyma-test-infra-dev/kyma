@@ -8,9 +8,11 @@ import (
 	"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	"github.com/kubernetes-incubator/service-catalog/pkg/client/clientset_generated/clientset"
 	bu "github.com/kyma-project/kyma/components/service-binding-usage-controller/pkg/client/clientset/versioned"
+	"github.com/kyma-project/kyma/tests/end-to-end/upgrade/pkg/injector"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -30,14 +32,16 @@ type HelmBrokerUpgradeTest struct {
 	ServiceCatalogInterface clientset.Interface
 	K8sInterface            kubernetes.Interface
 	BUInterface             bu.Interface
+	aInjector               *injector.Addons
 }
 
 // NewHelmBrokerTest returns new instance of the HelmBrokerUpgradeTest
-func NewHelmBrokerTest(k8sCli kubernetes.Interface, scCli clientset.Interface, buCli bu.Interface) *HelmBrokerUpgradeTest {
+func NewHelmBrokerTest(aInjector *injector.Addons, k8sCli kubernetes.Interface, scCli clientset.Interface, buCli bu.Interface) *HelmBrokerUpgradeTest {
 	return &HelmBrokerUpgradeTest{
 		K8sInterface:            k8sCli,
 		ServiceCatalogInterface: scCli,
 		BUInterface:             buCli,
+		aInjector:               aInjector,
 	}
 }
 
@@ -50,12 +54,23 @@ type helmBrokerFlow struct {
 
 // CreateResources creates resources needed for e2e upgrade test
 func (ut *HelmBrokerUpgradeTest) CreateResources(stop <-chan struct{}, log logrus.FieldLogger, namespace string) error {
+	if err := ut.aInjector.InjectAddonsConfiguration(namespace); err != nil {
+		return errors.Wrap(err, "while injecting addons configuration")
+	}
 	return ut.newFlow(stop, log, namespace).CreateResources()
 }
 
 // TestResources tests resources after backup phase
 func (ut *HelmBrokerUpgradeTest) TestResources(stop <-chan struct{}, log logrus.FieldLogger, namespace string) error {
-	return ut.newFlow(stop, log, namespace).TestResources()
+	if err := ut.newFlow(stop, log, namespace).TestResources(); err != nil {
+		return err
+	}
+
+	if err := ut.aInjector.CleanupAddonsConfiguration(namespace); err != nil {
+		return errors.Wrap(err, "while deleting addons configuration")
+	}
+
+	return nil
 }
 
 func (ut *HelmBrokerUpgradeTest) newFlow(stop <-chan struct{}, log logrus.FieldLogger, namespace string) *helmBrokerFlow {
@@ -87,6 +102,7 @@ func (f *helmBrokerFlow) CreateResources() error {
 	} {
 		err := fn()
 		if err != nil {
+			f.log.Errorln(err)
 			f.logReport()
 			return err
 		}
@@ -109,6 +125,7 @@ func (f *helmBrokerFlow) TestResources() error {
 	} {
 		err := fn()
 		if err != nil {
+			f.log.Errorln(err)
 			f.logReport()
 			return err
 		}
@@ -127,22 +144,28 @@ func (f *helmBrokerFlow) deployEnvTester() error {
 
 func (f *helmBrokerFlow) createRedisInstance() error {
 	f.log.Infof("Creating Redis service instance")
-	_, err := f.scInterface.ServicecatalogV1beta1().ServiceInstances(f.namespace).Create(&v1beta1.ServiceInstance{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ServiceInstance",
-			APIVersion: "servicecatalog.k8s.io/v1beta1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: redisInstanceName,
-		},
-		Spec: v1beta1.ServiceInstanceSpec{
-			PlanReference: v1beta1.PlanReference{
-				ClusterServiceClassExternalName: "redis",
-				ClusterServicePlanExternalName:  "micro",
+
+	return wait.Poll(time.Millisecond*500, time.Second*30, func() (done bool, err error) {
+		if _, err = f.scInterface.ServicecatalogV1beta1().ServiceInstances(f.namespace).Create(&v1beta1.ServiceInstance{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ServiceInstance",
+				APIVersion: "servicecatalog.k8s.io/v1beta1",
 			},
-		},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: redisInstanceName,
+			},
+			Spec: v1beta1.ServiceInstanceSpec{
+				PlanReference: v1beta1.PlanReference{
+					ServiceClassExternalName: "redis",
+					ServicePlanExternalName:  "micro",
+				},
+			},
+		}); err != nil {
+			f.log.Errorf("while creating redis instance: %v", err)
+			return false, nil
+		}
+		return true, nil
 	})
-	return err
 }
 
 func (f *helmBrokerFlow) createRedisBindingAndWaitForReadiness() error {

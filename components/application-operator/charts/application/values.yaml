@@ -21,10 +21,13 @@ applicationConnectivityValidator:
     proxyPort: 8081
     appRegistryHost: application-registry-external-api:8081
     externalAPIPort: 8080
+    cacheExpirationMinutes: 1
+    cacheCleanupMinutes: 2
 
 istio:
   gateway:
     name: kyma-gateway
+    nameMtls: kyma-gateway-application-connector
     namespace: kyma-system
 
 acceptanceTest:
@@ -40,8 +43,8 @@ eventService:
       pullPolicy: IfNotPresent
     args:
       externalAPIPort: &eventServiceExternalAPIPort 8081
-      eventsTargetURLV1: http://event-bus-publish.kyma-system.svc.cluster.local:8080/v1/events
-      eventsTargetURLV2: http://event-bus-publish.kyma-system.svc.cluster.local:8080/v2/events
+      eventsTargetURLV1: http://event-publish-service.kyma-system.svc.cluster.local:8080/v1/events
+      eventsTargetURLV2: http://event-publish-service.kyma-system.svc.cluster.local:8080/v2/events
       maxRequestSize: 65536
       requestTimeout: 10
       requestLogging: false

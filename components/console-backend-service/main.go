@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/rafter"
+
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/handler"
 	"github.com/golang/glog"
@@ -17,7 +19,6 @@ import (
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/authz"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/application"
-	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/assetstore"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/experimental"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlschema"
 	"github.com/kyma-project/kyma/components/console-backend-service/pkg/origin"
@@ -40,10 +41,12 @@ type config struct {
 	AllowedOrigins       []string      `envconfig:"optional"`
 	Verbose              bool          `envconfig:"default=false"`
 	KubeconfigPath       string        `envconfig:"optional"`
+	SystemNamespaces     []string      `envconfig:"default=istio-system;knative-eventing;knative-serving;kube-public;kube-system;kyma-backup;kyma-installer;kyma-integration;kyma-system;natss;compass-system"`
 	InformerResyncPeriod time.Duration `envconfig:"default=10m"`
 	ServerTimeout        time.Duration `envconfig:"default=10s"`
+	Burst                int           `envconfig:"default=2"`
 	Application          application.Config
-	AssetStore           assetstore.Config
+	Rafter               rafter.Config
 	OIDC                 authn.OIDCConfig
 	SARCacheConfig       authz.SARCacheConfig
 	FeatureToggles       experimental.FeatureToggles
@@ -55,10 +58,10 @@ func main() {
 	exitOnError(err, "Error while loading app config")
 	parseFlags(cfg)
 
-	k8sConfig, err := newRestClientConfig(cfg.KubeconfigPath)
+	k8sConfig, err := newRestClientConfig(cfg.KubeconfigPath, cfg.Burst)
 	exitOnError(err, "Error while initializing REST client config")
 
-	resolvers, err := domain.New(k8sConfig, cfg.Application, cfg.AssetStore, cfg.InformerResyncPeriod, cfg.FeatureToggles)
+	resolvers, err := domain.New(k8sConfig, cfg.Application, cfg.Rafter, cfg.InformerResyncPeriod, cfg.FeatureToggles, cfg.SystemNamespaces)
 	exitOnError(err, "Error while creating resolvers")
 
 	kubeClient, err := kubernetes.NewForConfig(k8sConfig)
@@ -114,7 +117,7 @@ func parseFlags(cfg config) {
 	flag.Parse()
 }
 
-func newRestClientConfig(kubeconfigPath string) (*restclient.Config, error) {
+func newRestClientConfig(kubeconfigPath string, burst int) (*restclient.Config, error) {
 	var config *restclient.Config
 	var err error
 	if kubeconfigPath != "" {
@@ -126,6 +129,9 @@ func newRestClientConfig(kubeconfigPath string) (*restclient.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	config.Burst = burst
+	config.UserAgent = "console-backend-service"
 	return config, nil
 }
 

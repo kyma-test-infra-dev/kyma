@@ -7,6 +7,7 @@ import (
 
 type options struct {
 	appName                               string
+	appMapName                            string
 	domainName                            string
 	namespace                             string
 	tillerUrl                             string
@@ -20,10 +21,11 @@ type options struct {
 	eventServiceImage                     string
 	eventServiceTestsImage                string
 	applicationConnectivityValidatorImage string
+	gatewayOncePerNamespace               bool
 }
 
 func parseArgs() *options {
-	appName := flag.String("appName", "application-operator", "Name used in controller registration")
+	appName := flag.String("appName", "application-operator", "Name used in application controller registration")
 	domainName := flag.String("domainName", "kyma.local", "Domain name of the cluster")
 	namespace := flag.String("namespace", "kyma-integration", "Namespace in which the Application chart will be installed")
 	tillerUrl := flag.String("tillerUrl", "tiller-deploy.kube-system.svc.cluster.local:44134", "Tiller release server url")
@@ -38,6 +40,8 @@ func parseArgs() *options {
 	eventServiceImage := flag.String("eventServiceImage", "", "The image of the Event Service to use")
 	eventServiceTestsImage := flag.String("eventServiceTestsImage", "", "The image of the Event Service Tests to use")
 	applicationConnectivityValidatorImage := flag.String("applicationConnectivityValidatorImage", "", "The image of the Application Connectivity Validator to use")
+
+	gatewayOncePerNamespace := flag.Bool("gatewayOncePerNamespace", false, "Specifies if Gateway should be deployed once per Namespace based on ServiceInstance or for every Application")
 
 	flag.Parse()
 
@@ -56,14 +60,17 @@ func parseArgs() *options {
 		eventServiceImage:                     *eventServiceImage,
 		eventServiceTestsImage:                *eventServiceTestsImage,
 		applicationConnectivityValidatorImage: *applicationConnectivityValidatorImage,
+		gatewayOncePerNamespace:               *gatewayOncePerNamespace,
 	}
 }
 
 func (o *options) String() string {
 	return fmt.Sprintf("--appName=%s --domainName=%s --namespace=%s --tillerUrl=%s"+
 		"--helmTLSKeyFile=%s --helmTLSCertificateFile=%s --tillerTLSSkipVerify=%v --syncPeriod=%d --installationTimeout=%d "+
-		"--applicationGatewayImage=%s --applicationGatewayTestsImage=%s --eventServiceImage=%s --eventServiceTestsImage=%s --applicationConnectivityValidatorImage=%s",
+		"--applicationGatewayImage=%s --applicationGatewayTestsImage=%s --eventServiceImage=%s --eventServiceTestsImage=%s"+
+		"--applicationConnectivityValidatorImage=%s --gatewayOncePerNamespace=%v",
 		o.appName, o.domainName, o.namespace, o.tillerUrl,
 		o.helmTLSKeyFile, o.helmTLSCertificateFile, o.tillerTLSSkipVerify, o.syncPeriod, o.installationTimeout,
-		o.applicationGatewayImage, o.applicationGatewayTestsImage, o.eventServiceImage, o.eventServiceTestsImage, o.applicationConnectivityValidatorImage)
+		o.applicationGatewayImage, o.applicationGatewayTestsImage, o.eventServiceImage, o.eventServiceTestsImage,
+		o.applicationConnectivityValidatorImage, o.gatewayOncePerNamespace)
 }

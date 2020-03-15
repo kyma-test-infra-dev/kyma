@@ -1,11 +1,11 @@
 ---
-title:  Console Backend Service
+title: Console Backend Service
 type: Details
 ---
 
 The Console Backend Service is a backend service which provides an API for all views of the Console UI. This service consumes the Kubernetes API and exposes a simplified GraphQL API to allow frontends to perform Kubernetes resource operations.
 
-> **NOTE:** Read [this](/components/security#details-graphql) security document for more information about the Kyma GraphQL implementation.
+> **NOTE:** Read [this](/components/security#details-graph-ql) security document for more information about the Kyma GraphQL implementation.
 
 ## Cache
 
@@ -17,11 +17,14 @@ The Console Backend Service consists of the Kubernetes resource logic and cache 
 
 These are the available Console Backend Service pluggable modules which contain the GraphQL resolver logic, where:
 - `apicontroller` relates to the API Controller.
+- `apigateway` relates to the API Gateway.
 - `authentication` relates to IDP Presets.
 - `application` relates to the Application Connector.
-- `content` relates to documentation.
 - `kubeless` relates to Serverless.
+- `rafter` relates to Rafter.
 - `servicecatalog` relates to the Service Catalog, including Service Classes, Service Instances, and Service Bindings.
 - `servicecatalogaddons` relates to the Service Catalog add-ons, such as ServiceBindingUsage, and UsageKinds.
+- `grafana` relates to Grafana.
+- `loki` relates to Loki.
 
 To enable a given module, install the corresponding Kyma component. It includes the BackendModule custom resource with the same name as the name of a given module.

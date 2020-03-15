@@ -1,4 +1,4 @@
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ template "fullname" . }}
@@ -8,6 +8,10 @@ metadata:
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
+  {{- with .Values.securityContext }}
+  securityContext:
+{{ toYaml . | indent 8 }}
+  {{- end }}
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
@@ -27,8 +31,15 @@ spec:
       serviceAccountName: {{ template "fullname" . }}
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.global.containerRegistry.path }}/{{ .Values.global.service_binding_usage_controller.dir }}binding-usage-controller:{{ .Values.global.service_binding_usage_controller.version }}"
+          image: "{{ .Values.global.containerRegistry.path }}/{{ .Values.global.service_binding_usage_controller.dir }}service-binding-usage-controller:{{ .Values.global.service_binding_usage_controller.version }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+            limits:
+              memory: 76Mi
+              cpu: 50m
+            requests:
+              memory: 24Mi
+              cpu: 30m
           env:
             - name: APP_LOGGER_LEVEL
               value: "debug"
@@ -45,3 +56,4 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 2
             successThreshold: 1
+            initialDelaySeconds: 15

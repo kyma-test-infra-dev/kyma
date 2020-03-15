@@ -1,2 +1,2 @@
-dependencies:
-  - name: knative-serving
+dependencies: 
+- name: knative-serving-init

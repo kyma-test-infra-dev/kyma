@@ -1,7 +1,8 @@
+{{- if not .Values.global.deployGatewayOncePerNamespace }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-application-gateway-external-api
+  name: {{ .Release.Name }}-application-gateway
   labels:
     application: {{ .Release.Name }}
     app: {{ .Release.Name }}-application-gateway
@@ -15,17 +16,18 @@ spec:
       name: http-api-port
   selector:
     app: {{ .Release.Name }}-application-gateway
-    release: {{ .Release.Name }}-application-gateway
+    release: {{ .Release.Name }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-event-service-external-api
+  name: {{ .Release.Name }}-event-service
   labels:
     application: {{ .Release.Name }}
     app: {{ .Release.Name }}-event-service
-    release: {{ .Release.Name }}-event-service
-    heritage: {{ .Release.Service }}-event-service
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
 spec:
   type: ClusterIP
   ports:
@@ -34,4 +36,4 @@ spec:
     name: http-api-port
   selector:
     app: {{ .Release.Name }}-event-service
-    release: {{ .Release.Name }}-event-service
+    release: {{ .Release.Name }}

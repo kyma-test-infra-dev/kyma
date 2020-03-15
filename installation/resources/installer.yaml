@@ -21,7 +21,7 @@ spec:
     default:
       # If a container does not specify memory limit, this default value will be applied.
       # If a container tries to allocate more memory, container will be OOM killed.
-      memory: 96Mi
+      memory: 256Mi
     defaultRequest:
       # If a container does not specify memory request, this default value will be applied.
       # The scheduler considers this value when scheduling a container to a node.
@@ -61,84 +61,65 @@ spec:
     plural: releases
     shortNames: ['release']
 ---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: all-psp
+rules:
+- apiGroups: ["extensions","policy"]
+  resources: ["podsecuritypolicies"]
+  verbs: ["use"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: all-psp
+subjects:
+- kind: ServiceAccount
+  name: helm-certs-job-sa
+  namespace: kyma-installer
+roleRef:
+  kind: ClusterRole
+  name: all-psp
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: helm-certs-job-sa
+  name: kyma-installer
   namespace: kyma-installer
+  labels:
+    kyma-project.io/installation: ""
 ---
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: helm-certs-rolebinding
-  namespace: kube-system
-subjects:
-- kind: ServiceAccount
-  name: helm-certs-job-sa
-  namespace: kyma-installer
-roleRef:
-  kind: Role
-  name: helm-certs-getter
-  apiGroup: rbac.authorization.k8s.io
----
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: helm-certs-rolebinding
-  namespace: kyma-installer
-subjects:
-- kind: ServiceAccount
-  name: helm-certs-job-sa
-  namespace: kyma-installer
-roleRef:
-  kind: Role
-  name: helm-certs-setter
-  apiGroup: rbac.authorization.k8s.io
----
-kind: Role
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: helm-certs-getter
-  namespace: kube-system
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get", "list"]
----
-kind: Role
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: helm-certs-setter
-  namespace: kyma-installer
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["get", "list", "create", "patch"]
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: helm-certs-job
+  name: kyma-installer
   namespace: kyma-installer
   labels:
     kyma-project.io/installation: ""
 spec:
+  selector:
+    matchLabels:
+      name: kyma-installer
   template:
     metadata:
-      name: helm-certs-job
-      namespace: kyma-installer
-      annotations:
-        sidecar.istio.io/inject: “false”
+      labels:
+        name: kyma-installer
     spec:
-      serviceAccountName: helm-certs-job-sa
-      restartPolicy: OnFailure
-      containers:
+      serviceAccountName: kyma-installer
+      initContainers:
       - name: certhelper
-        image: eu.gcr.io/kyma-project/test-infra/alpine-kubectl:v20190325-ff66a3a
+        image: eu.gcr.io/kyma-project/test-infra/alpine-kubectl:v20200310-5f52f407
         command:
           - bash
           - -c
           - |
+            if [ -f "/etc/certs/tls.crt" ]; then
+              echo "Helm Certificate already exists, do nothing."
+              exit 0
+            fi
+
             WORKING_DIR="/tmp/certs"
             mkdir -p "${WORKING_DIR}"
 
@@ -208,29 +189,11 @@ spec:
             )
 
             echo "${COMBO_YAML}" | kubectl create -f -
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: kyma-installer
-  namespace: kyma-installer
-  labels:
-    kyma-project.io/installation: ""
----
-apiVersion: extensions/v1beta1
-kind: Deployment
-metadata:
-  name: kyma-installer
-  namespace: kyma-installer
-  labels:
-    kyma-project.io/installation: ""
-spec:
-  template:
-    metadata:
-      labels:
-        name: kyma-installer
-    spec:
-      serviceAccountName: kyma-installer
+
+        volumeMounts:
+          - mountPath: /etc/certs
+            name: helm-certs
+            readOnly: true
       containers:
       - name: kyma-installer-container
         image: eu.gcr.io/kyma-project/develop/installer:408cb6a6
@@ -245,6 +208,7 @@ spec:
       - name: helm-certs
         secret:
           secretName: helm-secret
+          optional: true
           items:
             - key: global.helm.tls.crt
               path: tls.crt
@@ -276,4 +240,4 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: kyma-installer-reader
-  
+

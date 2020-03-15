@@ -92,6 +92,6 @@ func NewNamespaceSvc() *namespaceSvc {
 	return new(namespaceSvc)
 }
 
-func NewNamespaceConverter() *gqlNamespaceConverter {
-	return new(gqlNamespaceConverter)
+func NewGqlVersionInfoConverter() *gqlVersionInfoConverter {
+	return new(gqlVersionInfoConverter)
 }

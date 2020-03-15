@@ -6,6 +6,7 @@ connection_token_handler:
 
 global:
   isLocalEnv: false
+  enableAPIPackages: false
   namespace: kyma-integration
   istio:
     namespace: istio-system
@@ -13,57 +14,58 @@ global:
       secretName: istio-ingress-certs
     gateway:
       name: kyma-gateway
+      nameMtls: kyma-gateway-application-connector
       namespace: kyma-system
   containerRegistry:
     path: eu.gcr.io/kyma-project
   application_operator:
-    dir: develop/
-    version: "36059183"
+    dir:
+    version: PR-7586
   application_operator_tests:
-    dir: develop/
-    version: d7092530
+    dir:
+    version: PR-7586
   connector_service:
-    dir: develop/
-    version: f1454344
+    dir:
+    version: 4e3576cd
   connector_service_tests:
-    dir: develop/
-    version: 29f4d46c
+    dir:
+    version: 27eff119
   connection_token_handler:
-    dir: develop/
-    version: 3d922c3d
+    dir:
+    version: fbf1000b
   connection_token_handler_tests:
-    dir: develop/
-    version: 00d7f520
+    dir:
+    version: fbf1000b
   connectivity_certs_controller:
-    dir: pr/
-    version: PR-4789
+    dir:
+    version: fbf1000b
   event_service:
-    dir: develop/
-    version: "36059183"
+    dir:
+    version: cd9874af
   event_service_integration_tests:
-    dir: develop/
-    version: fc7361ac
+    dir:
+    version: 3bf47c25
   application_connectivity_validator:
-    dir: develop/
-    version: "36059183"
+    dir:
+    version: 83cc9c71
   application_gateway:
-    dir: develop/
-    version: ba297749
+    dir:
+    version: PR-7397
   application_gateway_tests:
-    dir: pr/
-    version: PR-4779
+    dir:
+    version: PR-7524
   application_registry:
-    dir: pr/
-    version: PR-4681
+    dir:
+    version: 35130f2e
   application_registry_tests:
-    dir: pr/
-    version: PR-4681
+    dir:
+    version: c608dbf3
   application_broker:
-    dir: develop/
-    version: d999e831
+    dir:
+    version: PR-7401
   application_connectivity_certs_setup_job:
-    dir: pr/
-    version: PR-4724
+    dir:
+    version: fbf1000b
 connectivity_certs_controller:
   enabled: false
 
@@ -73,18 +75,19 @@ application_connectivity_certs_setup_job:
       name: connector-service-app-ca
       namespace: kyma-integration
     caCertificateSecret:
-      name: application-connector-certs
+      name: kyma-gateway-certs-cacert
       namespace: istio-system
   certificate:
     validityTime: 92d
 
 tests:
   application_connector_tests:
-    enabled: *connectorServiceEnabled
+    #    enabled: *connectorServiceEnabled
+    enabled: true
     connector_service:
       central: false
     skipSslVerify: true
     image:
-      dir: develop/
-      version: "84164981"
+      dir:
+      version: PR-7462
       pullPolicy: IfNotPresent

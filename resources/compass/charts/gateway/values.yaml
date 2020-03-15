@@ -1,14 +1,10 @@
 deployment:
   image:
     pullPolicy: IfNotPresent
-  args:
-    containerPort: &port 3000
-
-service:
-  port: *port
+  securityContext: # Set on container level
+    runAsUser: 2000
+    allowPrivilegeEscalation: false
 
 gateway:
   enabled: false
-
-virtualService:
-  host: compass-gateway
+  manageCerts: true

@@ -1,16 +1,48 @@
-knative-serving:
-  gateway:
-    name: kyma-gateway.kyma-system.svc.cluster.local
-    serviceUrl: istio-ingressgateway.istio-system.svc.cluster.local
+knative_serving:
+  minikube:
+    networking_istio:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 100Mi
+    activator:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 100Mi
+    autoscaler:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 100Mi
+    autoscaler_hpa:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 100Mi
+    controller:
+      resources:
+        requests:
+          cpu: 30m
+          memory: 100Mi
+  podmonitor:
+    labels:
+      # PodMonitorSelector is configured here: resources/monitoring/templates/prometheus/prometheus.yaml
+      release: monitoring
 
 global:
+  version: "v0.12.0"
+  kubernetes_minimum_version: "v1.14.6"
   isLocalEnv: false
   knative: false
+  # temporary value
+  domainTemplate: "{{.Name}}-{{.Namespace}}.{{.Domain}}"
   containerRegistry:
     path: eu.gcr.io/kyma-project
   test_knative_serving_acceptance:
-    dir: develop/
-    version: adaa993d
+    dir: 
+    version: 9f667426
 
 test:
   target: "Test Target"
+  enabled: true

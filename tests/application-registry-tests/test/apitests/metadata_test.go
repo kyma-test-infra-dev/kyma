@@ -9,12 +9,25 @@ import (
 
 	"github.com/kyma-project/kyma/tests/application-registry-tests/test/testkit"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	connectedApp         = "connected-app"
 	csrfTokenEndpointURL = "https://csrf.token.endpoint.org"
+)
+
+var (
+	headers = map[string][]string{
+		"headerKey": {"headerValue"},
+	}
+	queryParameters = map[string][]string{
+		"queryParameterKey": {"queryParameterValue"},
+	}
+	requestParameters = testkit.RequestParameters{
+		Headers:         &headers,
+		QueryParameters: &queryParameters,
+	}
 )
 
 func TestApiMetadata(t *testing.T) {
@@ -35,6 +48,8 @@ func TestApiMetadata(t *testing.T) {
 	oauthAPI := newOauthAPI()
 	oauthAPIWithCSRF := newOauthAPI()
 	oauthAPIWithCSRF.Credentials.Oauth.CSRFInfo = &testkit.CSRFInfo{TokenEndpointURL: csrfTokenEndpointURL}
+	oauthAPIWithRequestParameters := newOauthAPI()
+	oauthAPIWithRequestParameters.Credentials.Oauth.RequestParameters = &requestParameters
 
 	basicAuthAPI := newBasicAuthAPI()
 	basicAuthAPIWithCSRF := newBasicAuthAPI()
@@ -94,7 +109,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -118,6 +133,10 @@ func TestApiMetadata(t *testing.T) {
 
 		t.Run("should register a service with OAuth credentials and CSRF token (with API, Events catalog, Documentation)", func(t *testing.T) {
 			testOAuthAPI(oauthAPIWithCSRF, t)
+		})
+
+		t.Run("should register a service with OAuth credentials and additional headers and query parameters (with API, Events catalog, Documentation)", func(t *testing.T) {
+			testOAuthAPI(oauthAPIWithRequestParameters, t)
 		})
 
 		testBasicApi := func(api *testkit.API, t *testing.T) {
@@ -248,7 +267,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -333,7 +352,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -371,7 +390,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -441,7 +460,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -509,7 +528,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -614,7 +633,7 @@ func TestApiMetadata(t *testing.T) {
 
 			// then
 			require.Equal(t, http.StatusOK, statusCode)
-			require.EqualValues(t, expectedServiceDefinition, *receivedServiceDefinition)
+			requireServiceDefinitionEqual(t, expectedServiceDefinition, receivedServiceDefinition)
 
 			// when
 			statusCode, existingServices, err := metadataServiceClient.GetAllServices(t)
@@ -723,7 +742,7 @@ func getExpectedDefinition(initialDefinition testkit.ServiceDetails, expectedLab
 
 func modifiedSwaggerSpec(appName string, serviceId string, namespace string) []byte {
 	return testkit.Compact([]byte(
-		fmt.Sprintf("{\"schemes\":[\"http\"],\"swagger\":\"2.0\",\"host\":\"app-%s-%s.%s.svc.cluster.local\",\"paths\":null}", appName, serviceId, namespace)),
+		fmt.Sprintf("{\"schemes\":[\"http\"],\"swagger\":\"2.0\",\"host\":\"%s-%s.%s.svc.cluster.local\",\"paths\":null}", appName, serviceId, namespace)),
 	)
 }
 
@@ -754,10 +773,11 @@ func hideClientCredentials(original testkit.ServiceDetails) testkit.ServiceDetai
 
 				result.Api.Credentials = &testkit.Credentials{
 					Oauth: &testkit.Oauth{
-						URL:          "http://oauth.com",
-						ClientID:     "********",
-						ClientSecret: "********",
-						CSRFInfo:     csrfInfo,
+						URL:               "http://oauth.com",
+						ClientID:          "********",
+						ClientSecret:      "********",
+						CSRFInfo:          csrfInfo,
+						RequestParameters: original.Api.Credentials.Oauth.RequestParameters,
 					},
 				}
 			}
@@ -825,7 +845,24 @@ func requireDefinitionsWithCertCredentialsEqual(t *testing.T, expected testkit.S
 	require.Equal(t, expected.Name, actual.Name)
 	require.Equal(t, expected.Provider, actual.Provider)
 	require.EqualValues(t, expected.Labels, actual.Labels)
-	require.EqualValues(t, expected.Events, actual.Events)
+	require.NotNil(t, actual.Events)
+	require.EqualValues(t, expected.Documentation, actual.Documentation)
+}
+
+func requireServiceDefinitionEqual(t *testing.T, expected testkit.ServiceDetails, actual *testkit.ServiceDetails) {
+	require.NotNil(t, actual)
+	require.Equal(t, expected.Name, actual.Name)
+	require.Equal(t, expected.Provider, actual.Provider)
+	require.Equal(t, expected.Description, actual.Description)
+	require.Equal(t, expected.ShortDescription, actual.ShortDescription)
+	require.Equal(t, expected.Identifier, actual.Identifier)
+	require.EqualValues(t, expected.Labels, actual.Labels)
+	require.EqualValues(t, expected.Api, actual.Api)
+	if expected.Events != nil {
+		require.NotNil(t, actual.Events)
+	} else {
+		require.Nil(t, actual.Events)
+	}
 	require.EqualValues(t, expected.Documentation, actual.Documentation)
 }
 

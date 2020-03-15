@@ -8,6 +8,14 @@ import (
 const (
 	delimiter               = "--"
 	defaultChannelNamespace = "kyma-system"
+	// SubscriptionSourceID is the key for source id in label
+	SubscriptionSourceID = "kyma-source-id"
+	// SubscriptionEventType is the key for event type in label
+	SubscriptionEventType = "kyma-event-type"
+	// SubscriptionEventTypeVersion is the key for event type version in label
+	SubscriptionEventTypeVersion = "kyma-event-type-version"
+	// SubNs is the key for namespace of the subscription
+	SubNs = "kyma-ns"
 )
 
 var (
@@ -30,12 +38,4 @@ func GetDefaultChannelNamespace() string {
 //    because of a limitation in the current knative version, if the channel name has a '.', the corresponding istio-virtualservice will not be created.
 func escapeHyphensAndPeriods(str *string) string {
 	return replacer.Replace(*str)
-}
-
-// EncodeChannelName function encodes and joins the given event components to construct the encoded channel name
-func EncodeChannelName(sourceID, eventType, eventTypeVersion *string) string {
-	return fmt.Sprintf("%s%s%s%s%s",
-		escapeHyphensAndPeriods(sourceID), delimiter,
-		escapeHyphensAndPeriods(eventType), delimiter,
-		escapeHyphensAndPeriods(eventTypeVersion))
 }

@@ -1,7 +1,7 @@
 package populator
 
 import (
-	"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1beta1"
+	"github.com/kubernetes-sigs/service-catalog/pkg/apis/servicecatalog/v1beta1"
 	"github.com/kyma-project/kyma/components/application-broker/internal"
 )
 
@@ -24,7 +24,6 @@ func (c *Converter) MapServiceInstance(in *v1beta1.ServiceInstance) *internal.In
 	return &internal.Instance{
 		ID:            internal.InstanceID(in.Spec.ExternalID),
 		Namespace:     internal.Namespace(in.Namespace),
-		ParamsHash:    "TODO",
 		ServicePlanID: planID,
 		ServiceID:     serviceID,
 		State:         state,

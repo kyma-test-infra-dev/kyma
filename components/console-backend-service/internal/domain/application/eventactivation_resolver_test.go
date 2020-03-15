@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/application/automock"
-	assetstoreMock "github.com/kyma-project/kyma/components/console-backend-service/internal/domain/shared/automock"
+	rafterMock "github.com/kyma-project/kyma/components/console-backend-service/internal/domain/shared/automock"
 
 	"github.com/kyma-project/kyma/components/application-broker/pkg/apis/applicationconnector/v1alpha1"
-	"github.com/kyma-project/kyma/components/asset-store-controller-manager/pkg/apis/assetstore/v1alpha2"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/application"
-	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/assetstore/spec"
+	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/rafter/spec"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlerror"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlschema"
+	"github.com/kyma-project/rafter/pkg/apis/rafter/v1beta1"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,17 +67,17 @@ func TestEventActivationResolver_EventActivationsQuery(t *testing.T) {
 func TestEventActivationResolver_EventActivationEventsField(t *testing.T) {
 	asyncApiBaseUrl := "example.com"
 	asyncApiFileName := "asyncApiSpec.json"
-
-	clusterAssets := []*v1alpha2.ClusterAsset{
+	clusterAssets := []*v1beta1.ClusterAsset{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "exampleName",
 			},
-			Status: v1alpha2.ClusterAssetStatus{
-				CommonAssetStatus: v1alpha2.CommonAssetStatus{
-					AssetRef: v1alpha2.AssetStatusRef{
+			Status: v1beta1.ClusterAssetStatus{
+				CommonAssetStatus: v1beta1.CommonAssetStatus{
+					Phase: v1beta1.AssetReady,
+					AssetRef: v1beta1.AssetStatusRef{
 						BaseURL: asyncApiBaseUrl,
-						Files: []v1alpha2.AssetFile{
+						Files: []v1beta1.AssetFile{
 							{
 								Name: asyncApiFileName,
 							},
@@ -87,36 +87,40 @@ func TestEventActivationResolver_EventActivationEventsField(t *testing.T) {
 			},
 		},
 	}
-	types := []string{"asyncapi", "asyncApi", "asyncapispec", "asyncApiSpec", "events"}
+	types := []string{"asyncapi", "asyncApi", "asyncapispec", "asyncApiSpec", "events", "async-api"}
 
 	t.Run("Success", func(t *testing.T) {
 		asyncApiSpec := &spec.AsyncAPISpec{
 			Data: spec.AsyncAPISpecData{
-				AsyncAPI: "1.0.0",
-				Topics: map[string]interface{}{
+				AsyncAPI: "2.0.0",
+				Channels: map[string]interface{}{
 					"sell.v1": map[string]interface{}{
 						"subscribe": map[string]interface{}{
-							"summary": "desc",
+							"message": map[string]interface{}{
+								"summary": "desc",
+							},
 						},
 					},
 					"sell.v2": map[string]interface{}{
 						"subscribe": map[string]interface{}{
-							"summary": "desc",
+							"message": map[string]interface{}{
+								"summary": "desc",
+							},
 						},
 					},
 				},
 			},
 		}
 
-		clusterAssetGetter := new(assetstoreMock.ClusterAssetGetter)
-		clusterAssetGetter.On("ListForDocsTopicByType", "test", types).Return(clusterAssets, nil)
+		clusterAssetGetter := new(rafterMock.ClusterAssetGetter)
+		clusterAssetGetter.On("ListForClusterAssetGroupByType", "test", types).Return(clusterAssets, nil)
 		defer clusterAssetGetter.AssertExpectations(t)
 
-		specificationGetter := new(assetstoreMock.SpecificationGetter)
+		specificationGetter := new(rafterMock.SpecificationGetter)
 		specificationGetter.On("AsyncAPI", asyncApiBaseUrl, asyncApiFileName).Return(asyncApiSpec, nil)
 		defer specificationGetter.AssertExpectations(t)
 
-		retriever := new(assetstoreMock.AssetStoreRetriever)
+		retriever := new(rafterMock.RafterRetriever)
 		retriever.On("ClusterAsset").Return(clusterAssetGetter)
 		retriever.On("Specification").Return(specificationGetter)
 
@@ -130,11 +134,47 @@ func TestEventActivationResolver_EventActivationEventsField(t *testing.T) {
 	})
 
 	t.Run("Not found", func(t *testing.T) {
-		clusterAssetGetter := new(assetstoreMock.ClusterAssetGetter)
-		clusterAssetGetter.On("ListForDocsTopicByType", "test", types).Return(nil, nil)
+		clusterAssetGetter := new(rafterMock.ClusterAssetGetter)
+		clusterAssetGetter.On("ListForClusterAssetGroupByType", "test", types).Return(nil, nil)
 		defer clusterAssetGetter.AssertExpectations(t)
 
-		assetStoreRetriever := new(assetstoreMock.AssetStoreRetriever)
+		assetStoreRetriever := new(rafterMock.RafterRetriever)
+		assetStoreRetriever.On("ClusterAsset").Return(clusterAssetGetter)
+
+		resolver := application.NewEventActivationResolver(nil, assetStoreRetriever)
+		result, err := resolver.EventActivationEventsField(nil, fixGQLEventActivation("test"))
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("Not ready", func(t *testing.T) {
+		asset := v1beta1.ClusterAsset{}
+		asset.Status.Phase = v1beta1.AssetFailed
+
+		clusterAssetGetter := new(rafterMock.ClusterAssetGetter)
+		clusterAssetGetter.On("ListForClusterAssetGroupByType", "test", types).Return([]*v1beta1.ClusterAsset{&asset}, nil)
+		defer clusterAssetGetter.AssertExpectations(t)
+
+		assetStoreRetriever := new(rafterMock.RafterRetriever)
+		assetStoreRetriever.On("ClusterAsset").Return(clusterAssetGetter)
+
+		resolver := application.NewEventActivationResolver(nil, assetStoreRetriever)
+		result, err := resolver.EventActivationEventsField(nil, fixGQLEventActivation("test"))
+
+		require.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("No files", func(t *testing.T) {
+		asset := v1beta1.ClusterAsset{}
+		asset.Status.Phase = v1beta1.AssetReady
+
+		clusterAssetGetter := new(rafterMock.ClusterAssetGetter)
+		clusterAssetGetter.On("ListForClusterAssetGroupByType", "test", types).Return([]*v1beta1.ClusterAsset{&asset}, nil)
+		defer clusterAssetGetter.AssertExpectations(t)
+
+		assetStoreRetriever := new(rafterMock.RafterRetriever)
 		assetStoreRetriever.On("ClusterAsset").Return(clusterAssetGetter)
 
 		resolver := application.NewEventActivationResolver(nil, assetStoreRetriever)
@@ -151,15 +191,15 @@ func TestEventActivationResolver_EventActivationEventsField(t *testing.T) {
 			},
 		}
 
-		clusterAssetGetter := new(assetstoreMock.ClusterAssetGetter)
-		clusterAssetGetter.On("ListForDocsTopicByType", "test", types).Return(clusterAssets, nil)
+		clusterAssetGetter := new(rafterMock.ClusterAssetGetter)
+		clusterAssetGetter.On("ListForClusterAssetGroupByType", "test", types).Return(clusterAssets, nil)
 		defer clusterAssetGetter.AssertExpectations(t)
 
-		specificationGetter := new(assetstoreMock.SpecificationGetter)
+		specificationGetter := new(rafterMock.SpecificationGetter)
 		specificationGetter.On("AsyncAPI", asyncApiBaseUrl, asyncApiFileName).Return(asyncApiSpec, nil)
 		defer specificationGetter.AssertExpectations(t)
 
-		retriever := new(assetstoreMock.AssetStoreRetriever)
+		retriever := new(rafterMock.RafterRetriever)
 		retriever.On("ClusterAsset").Return(clusterAssetGetter)
 		retriever.On("Specification").Return(specificationGetter)
 
@@ -171,9 +211,9 @@ func TestEventActivationResolver_EventActivationEventsField(t *testing.T) {
 	})
 
 	t.Run("Nil", func(t *testing.T) {
-		getter := new(assetstoreMock.ClusterAssetGetter)
+		getter := new(rafterMock.ClusterAssetGetter)
 
-		retriever := new(assetstoreMock.AssetStoreRetriever)
+		retriever := new(rafterMock.RafterRetriever)
 		retriever.On("ClusterAsset").Return(getter)
 
 		resolver := application.NewEventActivationResolver(nil, retriever)
@@ -184,11 +224,11 @@ func TestEventActivationResolver_EventActivationEventsField(t *testing.T) {
 	})
 
 	t.Run("Error", func(t *testing.T) {
-		getter := new(assetstoreMock.ClusterAssetGetter)
-		getter.On("ListForDocsTopicByType", "test", types).Return(nil, errors.New("nope"))
+		getter := new(rafterMock.ClusterAssetGetter)
+		getter.On("ListForClusterAssetGroupByType", "test", types).Return(nil, errors.New("nope"))
 		defer getter.AssertExpectations(t)
 
-		retriever := new(assetstoreMock.AssetStoreRetriever)
+		retriever := new(rafterMock.RafterRetriever)
 		retriever.On("ClusterAsset").Return(getter)
 
 		resolver := application.NewEventActivationResolver(nil, retriever)

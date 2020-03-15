@@ -9,13 +9,15 @@ import (
 	"syscall"
 	"time"
 
-	scCs "github.com/kubernetes-incubator/service-catalog/pkg/client/clientset_generated/clientset"
-	catalogInformers "github.com/kubernetes-incubator/service-catalog/pkg/client/informers_generated/externalversions"
+	scCs "github.com/kubernetes-sigs/service-catalog/pkg/client/clientset_generated/clientset"
+	catalogInformers "github.com/kubernetes-sigs/service-catalog/pkg/client/informers_generated/externalversions"
 	"github.com/kyma-project/kyma/components/application-broker/internal/access"
 	"github.com/kyma-project/kyma/components/application-broker/internal/broker"
 	"github.com/kyma-project/kyma/components/application-broker/internal/config"
+	"github.com/kyma-project/kyma/components/application-broker/internal/knative"
 	"github.com/kyma-project/kyma/components/application-broker/internal/mapping"
 	"github.com/kyma-project/kyma/components/application-broker/internal/nsbroker"
+	"github.com/kyma-project/kyma/components/application-broker/internal/servicecatalog"
 	"github.com/kyma-project/kyma/components/application-broker/internal/storage"
 	"github.com/kyma-project/kyma/components/application-broker/internal/storage/populator"
 	"github.com/kyma-project/kyma/components/application-broker/internal/syncer"
@@ -25,10 +27,12 @@ import (
 	appCli "github.com/kyma-project/kyma/components/application-operator/pkg/client/clientset/versioned"
 	appInformer "github.com/kyma-project/kyma/components/application-operator/pkg/client/informers/externalversions"
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/informers/core/v1"
+	istioCli "istio.io/client-go/pkg/clientset/versioned"
+	v1 "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+	eventingCli "knative.dev/eventing/pkg/client/clientset/versioned"
 )
 
 // informerResyncPeriod defines how often informer will execute relist action. Setting to zero disable resync.
@@ -61,8 +65,15 @@ func main() {
 	fatalOnError(err)
 	k8sClient, err := kubernetes.NewForConfig(k8sConfig)
 	fatalOnError(err)
+	eventingClient, err := eventingCli.NewForConfig(k8sConfig)
+	fatalOnError(err)
+	knClient := knative.NewClient(eventingClient, k8sClient)
+	istioClient, err := istioCli.NewForConfig(k8sConfig)
+	fatalOnError(err)
 
-	srv := SetupServerAndRunControllers(cfg, log, stopCh, k8sClient, scClientSet, appClient, mClient)
+	livenessCheckStatus := broker.LivenessCheckStatus{Succeeded: false}
+	srv := SetupServerAndRunControllers(cfg, log, stopCh, k8sClient, scClientSet, appClient, mClient, knClient,
+		istioClient, &livenessCheckStatus)
 
 	fatalOnError(srv.Run(ctx, fmt.Sprintf(":%d", cfg.Port)))
 }
@@ -73,6 +84,9 @@ func SetupServerAndRunControllers(cfg *config.Config, log *logrus.Entry, stopCh 
 	scClientSet scCs.Interface,
 	appClient appCli.Interface,
 	mClient mappingCli.Interface,
+	knClient knative.Client,
+	istioClient istioCli.Interface,
+	livenessCheckStatus *broker.LivenessCheckStatus,
 ) *broker.Server {
 
 	// create storage factory
@@ -108,22 +122,26 @@ func SetupServerAndRunControllers(cfg *config.Config, log *logrus.Entry, stopCh 
 	// internal services
 	nsBrokerSyncer := syncer.NewServiceBrokerSyncer(scClientSet.ServicecatalogV1beta1())
 	relistRequester := syncer.NewRelistRequester(nsBrokerSyncer, cfg.BrokerRelistDurationWindow, log)
-	siFacade := broker.NewServiceInstanceFacade(scInformersGroup.ServiceInstances().Informer())
+	siFacade := servicecatalog.NewFacade(scInformersGroup.ServiceInstances().Informer(), scInformersGroup.ServiceClasses().Informer())
 
-	accessChecker := access.New(sFact.Application(), mClient.ApplicationconnectorV1alpha1(), sFact.Instance())
+	accessChecker := access.New(sFact.Application(), mClient.ApplicationconnectorV1alpha1(), sFact.Instance(), cfg.APIPackagesSupport)
 
-	appSyncCtrl := syncer.New(appInformersGroup.Applications(), sFact.Application(), sFact.Application(), relistRequester, log)
+	appSyncCtrl := syncer.New(appInformersGroup.Applications(), sFact.Application(), sFact.Application(), relistRequester, log, cfg.APIPackagesSupport)
 
 	brokerService, err := broker.NewNsBrokerService()
 	fatalOnError(err)
 
 	nsBrokerFacade := nsbroker.NewFacade(scClientSet.ServicecatalogV1beta1(), k8sClient.CoreV1(), nsBrokerSyncer, cfg.Namespace, cfg.UniqueSelectorLabelKey, cfg.UniqueSelectorLabelValue, cfg.ServiceName, int32(cfg.Port), log)
 
-	mappingCtrl := mapping.New(mInformersGroup.ApplicationMappings().Informer(), nsInformer, k8sClient.CoreV1().Namespaces(), sFact.Application(), nsBrokerFacade, nsBrokerSyncer, log)
+	mappingCtrl := mapping.New(mInformersGroup.ApplicationMappings().Informer(),
+		nsInformer, scInformersGroup.ServiceInstances().Informer(), k8sClient.CoreV1().Namespaces(), sFact.Application(),
+		nsBrokerFacade, nsBrokerSyncer, siFacade, log, livenessCheckStatus, cfg.APIPackagesSupport)
 
 	// create broker
 	srv := broker.New(sFact.Application(), sFact.Instance(), sFact.InstanceOperation(), accessChecker,
-		mClient.ApplicationconnectorV1alpha1(), siFacade, mInformersGroup.ApplicationMappings().Lister(), brokerService, log)
+		mClient.ApplicationconnectorV1alpha1(),
+		mInformersGroup.ApplicationMappings().Lister(), brokerService,
+		&mClient, knClient, &istioClient, log, livenessCheckStatus, cfg.APIPackagesSupport)
 
 	// start informers
 	scInformerFactory.Start(stopCh)

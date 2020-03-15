@@ -1,0 +1,14 @@
+resources/event-sources/templates/500-sources-controller:
+  yaml:
+global:
+  containerRegistry:
+    path: eu.gcr.io/kyma-project
+  controllerManager:
+    name: controller-manager
+    image: event-sources-controller-manager
+    dir: ''
+    version: bb5810fd
+  httpAdapter:
+    image: event-sources-http-adapter
+    dir: ''
+    version: bb5810fd

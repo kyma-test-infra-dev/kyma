@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/kyma-project/kyma/components/application-broker/internal"
+	"github.com/kyma-project/kyma/components/application-broker/internal/broker"
 	"github.com/kyma-project/kyma/components/application-broker/pkg/apis/applicationconnector/v1alpha1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -55,31 +57,53 @@ type nsBrokerSyncer interface {
 	SyncBroker(name string) error
 }
 
+type instanceChecker interface {
+	AnyServiceInstanceExists(namespace string) (bool, error)
+}
+
 // Controller populates local storage with all ApplicationMapping custom resources created in k8s cluster.
 type Controller struct {
-	queue          workqueue.RateLimitingInterface
-	emInformer     cache.SharedIndexInformer
-	nsInformer     cache.SharedIndexInformer
-	nsPatcher      nsPatcher
-	appGetter      appGetter
-	nsBrokerFacade nsBrokerFacade
-	nsBrokerSyncer nsBrokerSyncer
-	mappingSvc     mappingLister
-	log            logrus.FieldLogger
+	queue               workqueue.RateLimitingInterface
+	emInformer          cache.SharedIndexInformer
+	nsInformer          cache.SharedIndexInformer
+	nsPatcher           nsPatcher
+	appGetter           appGetter
+	nsBrokerFacade      nsBrokerFacade
+	nsBrokerSyncer      nsBrokerSyncer
+	mappingSvc          mappingLister
+	livenessCheckStatus *broker.LivenessCheckStatus
+	log                 logrus.FieldLogger
+
+	instanceChecker    instanceChecker
+	apiPackagesSupport bool
 }
 
 // New creates new application mapping controller
-func New(emInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer, nsPatcher nsPatcher, appGetter appGetter, nsBrokerFacade nsBrokerFacade, nsBrokerSyncer nsBrokerSyncer, log logrus.FieldLogger) *Controller {
+func New(emInformer cache.SharedIndexInformer,
+	nsInformer cache.SharedIndexInformer,
+	instInformer cache.SharedIndexInformer,
+	nsPatcher nsPatcher,
+	appGetter appGetter,
+	nsBrokerFacade nsBrokerFacade,
+	nsBrokerSyncer nsBrokerSyncer,
+	instanceChecker instanceChecker,
+	log logrus.FieldLogger,
+	livenessCheckStatus *broker.LivenessCheckStatus,
+	apiPackagesSupport bool) *Controller {
+
 	c := &Controller{
-		log:            log.WithField("service", "labeler:controller"),
-		emInformer:     emInformer,
-		nsInformer:     nsInformer,
-		queue:          workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
-		nsPatcher:      nsPatcher,
-		appGetter:      appGetter,
-		nsBrokerFacade: nsBrokerFacade,
-		nsBrokerSyncer: nsBrokerSyncer,
-		mappingSvc:     newMappingService(emInformer),
+		log:                 log.WithField("service", "labeler:controller"),
+		emInformer:          emInformer,
+		nsInformer:          nsInformer,
+		queue:               workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		nsPatcher:           nsPatcher,
+		appGetter:           appGetter,
+		nsBrokerFacade:      nsBrokerFacade,
+		nsBrokerSyncer:      nsBrokerSyncer,
+		mappingSvc:          newMappingService(emInformer),
+		livenessCheckStatus: livenessCheckStatus,
+		instanceChecker:     instanceChecker,
+		apiPackagesSupport:  apiPackagesSupport,
 	}
 
 	// EventHandler reacts every time when we add, update or delete ApplicationMapping
@@ -87,6 +111,22 @@ func New(emInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInfor
 		AddFunc:    c.addEM,
 		UpdateFunc: c.updateEM,
 		DeleteFunc: c.deleteEM,
+	})
+
+	instInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		DeleteFunc: func(obj interface{}) {
+			key, err := cache.MetaNamespaceKeyFunc(obj)
+			if err != nil {
+				c.log.Errorf("while handling deleting event: while deleting service instance resource to queue: couldn't get key: %v", err)
+				return
+			}
+			ns, _, err := cache.SplitMetaNamespaceKey(key)
+			if err != nil {
+				c.log.Errorf("while handling deleting event: while deleting service instance resource to queue: couldn't split key: %v", err)
+				return
+			}
+			c.processRemovalInNamespace(ns)
+		},
 	})
 	return c
 }
@@ -137,6 +177,25 @@ func (c *Controller) Run(stopCh <-chan struct{}) {
 	c.log.Info("EM controller synced and ready")
 
 	wait.Until(c.runWorker, time.Second, stopCh)
+}
+
+// processRemovalInNamespace triggers controller to process removal an ApplicationMapping.
+func (c *Controller) processRemovalInNamespace(namespace string) error {
+	// put the key of non-existing object to the queue for processing.
+	key, err := cache.MetaNamespaceKeyFunc(&v1alpha1.ApplicationMapping{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "",
+			Namespace: namespace,
+		},
+		TypeMeta: v1.TypeMeta{
+			APIVersion: v1alpha1.SchemeGroupVersion.String(),
+		},
+	})
+	if err != nil {
+		return errors.Wrapf(err, "while adding a key to processing queue to trigger removal processing")
+	}
+	c.queue.Add(key)
+	return nil
 }
 
 func (c *Controller) shutdownQueueOnStop(stopCh <-chan struct{}) {
@@ -196,15 +255,23 @@ func (c *Controller) processItem(key string) error {
 		return err
 	}
 
+	if name == broker.LivenessApplicationSampleName {
+		c.livenessCheckStatus.Succeeded = true
+		c.log.Infof("livenessCheckStatus flag set to: %v", c.livenessCheckStatus.Succeeded)
+		return nil
+	}
+
 	if !emExist {
-		if err = c.ensureNsNotLabelled(appNs); err != nil {
+		if err = c.ensureNsNotLabelled(appNs, name); err != nil {
 			return err
 		}
 		return c.ensureNsBrokerNotRegisteredIfNoMappingsOrSync(namespace)
 	}
+
 	if err = c.ensureNsLabelled(name, appNs); err != nil {
 		return err
 	}
+
 	envMapping, ok := emObj.(*v1alpha1.ApplicationMapping)
 	if !ok {
 		return fmt.Errorf("cannot cast received object to v1alpha1.ApplicationMapping type, type was [%T]", emObj)
@@ -240,6 +307,7 @@ func (c *Controller) ensureNsBrokerRegisteredAndSynced(envMapping *v1alpha1.Appl
 		}
 		return nil
 	}
+
 	if err = c.nsBrokerFacade.Create(envMapping.Namespace); err != nil {
 		return errors.Wrapf(err, "while creating namespaced broker in namespace [%s]", envMapping.Namespace)
 	}
@@ -266,13 +334,32 @@ func (c *Controller) ensureNsBrokerNotRegisteredIfNoMappingsOrSync(namespace str
 		}
 		return nil
 	}
+
+	// check if there is any application broker instance in the namespace
+	existingInstance, err := c.instanceChecker.AnyServiceInstanceExists(namespace)
+	if err != nil {
+		return errors.Wrapf(err, "while checking instances for namespace [%s]", namespace)
+	}
+	if existingInstance {
+		// sync broker because services are removed from the offering
+		if err = c.nsBrokerSyncer.SyncBroker(namespace); err != nil {
+			return errors.Wrapf(err, "while syncing namespaced broker from namespace [%s]", namespace)
+		}
+		return nil
+	}
+
 	if err = c.nsBrokerFacade.Delete(namespace); err != nil {
 		return errors.Wrapf(err, "while removing namespaced broker from namespace [%s]", namespace)
 	}
 	return nil
 }
 
-func (c *Controller) ensureNsNotLabelled(ns *corev1.Namespace) error {
+func (c *Controller) ensureNsNotLabelled(ns *corev1.Namespace, mName string) error {
+	if c.apiPackagesSupport { // namespace labeling is removed when using V2 api (since api-packages)
+		c.log.Info("Skipping removing namespace label because of using V2 api version")
+		return nil
+	}
+
 	nsCopy := ns.DeepCopy()
 	c.log.Infof("Deleting AccessLabel: %q, from the namespace - %q", nsCopy.Labels["accessLabel"], nsCopy.Name)
 
@@ -287,11 +374,17 @@ func (c *Controller) ensureNsNotLabelled(ns *corev1.Namespace) error {
 }
 
 func (c *Controller) ensureNsLabelled(appName string, appNs *corev1.Namespace) error {
+	if c.apiPackagesSupport { // namespace labeling is removed when using V2 api (since api-packages)
+		c.log.Info("Skipping adding namespace label because of using V2 api version")
+		return nil
+	}
+
 	var label string
 	label, err := c.getAppAccLabel(appName)
 	if err != nil {
 		return errors.Wrapf(err, "cannot get AccessLabel from Application: %q", appName)
 	}
+
 	err = c.applyNsAccLabel(appNs, label)
 	if err != nil {
 		return errors.Wrapf(err, "cannot apply AccessLabel to the namespace: %q", appNs.Name)
@@ -304,6 +397,7 @@ func (c *Controller) applyNsAccLabel(ns *corev1.Namespace, label string) error {
 	if nsCopy.Labels == nil {
 		nsCopy.Labels = make(map[string]string)
 	}
+
 	nsCopy.Labels["accessLabel"] = label
 
 	c.log.Infof("Applying AccessLabel: %q to namespace - %q", label, nsCopy.Name)

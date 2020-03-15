@@ -22,3 +22,10 @@ bin
 *.swp
 *.swo
 *~
+
+# Licenses
+licenses
+
+/skaffold.yaml
+/app.yaml
+

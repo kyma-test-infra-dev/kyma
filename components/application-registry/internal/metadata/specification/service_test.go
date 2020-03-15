@@ -1,22 +1,23 @@
 package specification
 
 import (
-	"github.com/kyma-project/kyma/components/application-registry/internal/metadata/specification/assetstore/docstopic"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/kyma-project/kyma/components/application-registry/internal/metadata/specification/rafter/clusterassetgroup"
+
 	"github.com/kyma-project/kyma/components/application-registry/internal/apperrors"
 	"github.com/kyma-project/kyma/components/application-registry/internal/metadata/model"
-	"github.com/kyma-project/kyma/components/application-registry/internal/metadata/specification/assetstore/mocks"
+	"github.com/kyma-project/kyma/components/application-registry/internal/metadata/specification/rafter/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
 	serviceId                    = "1234"
-	gatewayUrl                   = "http://app-1234.io"
-	defaultSpecRequestTimeout    = 5
+	gatewayUrl                   = "http://1234.io"
+	defaultSpecRequestTimeout    = 20
 	defaultSpecRequestSkipVerify = true
 )
 
@@ -26,7 +27,7 @@ var (
 	baseDocs      = []byte("{\"baseDocs\":\"baseDocs\"}")
 
 	swaggerApiSpec      = []byte("{\"swagger\":\"2.0\"}")
-	modifiedSwaggerSpec = []byte("{\"schemes\":[\"http\"],\"swagger\":\"2.0\",\"host\":\"app-1234.io\",\"paths\":null}")
+	modifiedSwaggerSpec = []byte("{\"schemes\":[\"http\"],\"swagger\":\"2.0\",\"host\":\"1234.io\",\"paths\":null}")
 )
 
 func TestSpecService_PutSpec(t *testing.T) {
@@ -35,51 +36,51 @@ func TestSpecService_PutSpec(t *testing.T) {
 		// given
 		serviceDef := defaultServiceDefWithAPI(&model.API{Spec: baseApiSpec, ApiType: ""})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should modify and save inline swagger spec", func(t *testing.T) {
 		// given
 		serviceDef := defaultServiceDefWithAPI(&model.API{Spec: swaggerApiSpec})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, modifiedSwaggerSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, modifiedSwaggerSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should not modify spec if ApiType set to oData", func(t *testing.T) {
 		// given
 		serviceDef := defaultServiceDefWithAPI(&model.API{Spec: swaggerApiSpec, ApiType: oDataSpecType})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.ODataApiType, baseDocs, swaggerApiSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.ODataApiType, baseDocs, swaggerApiSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should fetch and save spec", func(t *testing.T) {
@@ -91,17 +92,17 @@ func TestSpecService_PutSpec(t *testing.T) {
 
 		serviceDef := defaultServiceDefWithAPI(&model.API{SpecificationUrl: specServer.URL + "/path"})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should fetch spec if spec equal to null", func(t *testing.T) {
@@ -113,17 +114,17 @@ func TestSpecService_PutSpec(t *testing.T) {
 
 		serviceDef := defaultServiceDefWithAPI(&model.API{Spec: []byte("null"), SpecificationUrl: specServer.URL + "/path"})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should fetch, modify and save spec", func(t *testing.T) {
@@ -135,17 +136,17 @@ func TestSpecService_PutSpec(t *testing.T) {
 
 		serviceDef := defaultServiceDefWithAPI(&model.API{SpecificationUrl: specServer.URL + "/path"})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, modifiedSwaggerSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, modifiedSwaggerSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should return UpstreamServerCallFailed error when failed to fetch spec", func(t *testing.T) {
@@ -154,9 +155,9 @@ func TestSpecService_PutSpec(t *testing.T) {
 
 		serviceDef := defaultServiceDefWithAPI(&model.API{SpecificationUrl: specServer.URL})
 
-		assetStoreSvc := &mocks.Service{}
+		rafterSvc := &mocks.Service{}
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
@@ -175,61 +176,61 @@ func TestSpecService_PutSpec(t *testing.T) {
 
 		serviceDef := defaultServiceDefWithAPI(&model.API{TargetUrl: specServer.URL, ApiType: oDataSpecType})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.ODataApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.ODataApiType, baseDocs, baseApiSpec, baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should save empty spec when no spec url provided and api type is not OData", func(t *testing.T) {
 		// given
 		serviceDef := defaultServiceDefWithAPI(&model.API{})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, []byte(nil), baseEventSpec).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, []byte(nil), baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should skip processing api spec if api not specified", func(t *testing.T) {
 		// given
 		serviceDef := defaultServiceDefWithAPI(nil)
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.NoneApiType, baseDocs, []byte(nil), baseEventSpec).Return(nil)
+		assetRafterSvc := &mocks.Service{}
+		assetRafterSvc.On("Put", serviceId, clusterassetgroup.NoneApiType, baseDocs, []byte(nil), baseEventSpec).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(assetRafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
 
 		// then
 		require.NoError(t, err)
-		assetStoreSvc.AssertExpectations(t)
+		assetRafterSvc.AssertExpectations(t)
 	})
 
 	t.Run("should return error when saving to Minio failed", func(t *testing.T) {
 		// given
 		serviceDef := defaultServiceDefWithAPI(&model.API{Spec: baseApiSpec})
 
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Put", serviceId, docstopic.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(apperrors.Internal("Error"))
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Put", serviceId, clusterassetgroup.OpenApiType, baseDocs, baseApiSpec, baseEventSpec).Return(apperrors.Internal("Error"))
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.PutSpec(serviceDef, gatewayUrl)
@@ -237,7 +238,7 @@ func TestSpecService_PutSpec(t *testing.T) {
 		// then
 		require.Error(t, err)
 		assert.Equal(t, apperrors.CodeInternal, err.Code())
-		assetStoreSvc.AssertExpectations(t)
+		rafterSvc.AssertExpectations(t)
 	})
 }
 
@@ -245,10 +246,10 @@ func TestSpecService_GetSpec(t *testing.T) {
 
 	t.Run("should get spec", func(t *testing.T) {
 		// given
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Get", serviceId).Return(baseDocs, baseApiSpec, baseEventSpec, nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Get", serviceId).Return(baseDocs, baseApiSpec, baseEventSpec, nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		docs, apiSpec, eventsSpec, err := specService.GetSpec(serviceId)
@@ -262,10 +263,10 @@ func TestSpecService_GetSpec(t *testing.T) {
 
 	t.Run("should return error if getting speec failed", func(t *testing.T) {
 		// given
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Get", serviceId).Return(nil, nil, nil, apperrors.Internal("Error"))
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Get", serviceId).Return(nil, nil, nil, apperrors.Internal("Error"))
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		docs, apiSpec, eventsSpec, err := specService.GetSpec(serviceId)
@@ -283,10 +284,10 @@ func TestSpecService_RemoveSpec(t *testing.T) {
 
 	t.Run("should delete spec", func(t *testing.T) {
 		// given
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Remove", serviceId).Return(nil)
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Remove", serviceId).Return(nil)
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.RemoveSpec(serviceId)
@@ -297,10 +298,10 @@ func TestSpecService_RemoveSpec(t *testing.T) {
 
 	t.Run("should return error when failed to remove spec", func(t *testing.T) {
 		// given
-		assetStoreSvc := &mocks.Service{}
-		assetStoreSvc.On("Remove", serviceId).Return(apperrors.Internal("Error"))
+		rafterSvc := &mocks.Service{}
+		rafterSvc.On("Remove", serviceId).Return(apperrors.Internal("Error"))
 
-		specService := NewSpecService(assetStoreSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
+		specService := NewSpecService(rafterSvc, defaultSpecRequestTimeout, defaultSpecRequestSkipVerify)
 
 		// when
 		err := specService.RemoveSpec(serviceId)

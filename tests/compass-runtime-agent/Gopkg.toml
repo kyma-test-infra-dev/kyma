@@ -1,0 +1,36 @@
+required = [
+    "golang.org/x/tools/cmd/goimports",
+    "github.com/kisielk/errcheck",
+]
+
+[prune]
+  go-tests = true
+  unused-packages = true
+
+[[override]]
+  name = "github.com/kisielk/errcheck"
+  revision = "e14f8d59a22d460d56c5ee92507cd94c78fbf274"
+
+[[constraint]]
+  name = "github.com/kyma-incubator/compass"
+  revision = "f32c0dd81de5be7357e07356780dfb2347531b08"
+
+[[constraint]]
+  name = "github.com/kyma-project/rafter"
+  revision = "2362d0c0f6eab6d7d8e0d12c915b4ffff17d3b78"
+
+[[override]]
+  name = "k8s.io/client-go"
+  version = "kubernetes-1.15.2"
+
+[[override]]
+  name = "k8s.io/api"
+  version = "kubernetes-1.15.2"
+
+[[override]]
+  name = "k8s.io/apimachinery"
+  version = "kubernetes-1.15.2"
+
+ [[constraint]]
+  name = "github.com/kyma-project/kyma"
+  revision = "c9f7a5f5947b9bef289c068b73deb585b636e7a4"

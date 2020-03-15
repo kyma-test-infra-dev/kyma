@@ -137,14 +137,20 @@ func (r *selfSubjectRulesResolver) SetSelfSubjectRulesConverter(converter gqlSel
 
 //Namespace
 
-func NewNamespaceService(informer cache.SharedIndexInformer, client v1.CoreV1Interface) (*namespaceService, error) {
-	return newNamespaceService(informer, client)
+func NewNamespaceService(informer cache.SharedIndexInformer, podService podSvc, client v1.CoreV1Interface) (*namespaceService, error) {
+	return newNamespaceService(informer, podService, client)
 }
 
-func NewNamespaceResolver(namespaceSvc namespaceSvc, appRetriever shared.ApplicationRetriever) *namespaceResolver {
-	return newNamespaceResolver(namespaceSvc, appRetriever)
+func NewNamespaceResolver(namespaceSvc namespaceSvc, appRetriever shared.ApplicationRetriever, systemNamespaces []string) *namespaceResolver {
+	return newNamespaceResolver(namespaceSvc, appRetriever, systemNamespaces)
 }
 
-func (r *namespaceResolver) SetNamespaceConverter(converter gqlNamespaceConverter) {
-	r.namespaceConverter = converter
+//Kyma Version
+
+func NewVersionInfoResolver(service deploymentLister) *versionInfoResolver {
+	return newVersionInfoResolver(service)
+}
+
+func (r *versionInfoResolver) SetVersionInfoConverter(converter gqlVersionInfoConverter) {
+	r.versionInfoConverter = converter
 }

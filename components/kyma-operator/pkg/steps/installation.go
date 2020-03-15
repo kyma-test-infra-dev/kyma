@@ -1,50 +1,42 @@
 package steps
 
 import (
+	"fmt"
 	"log"
+	"time"
 
+	"github.com/avast/retry-go"
 	"github.com/kyma-project/kyma/components/kyma-operator/pkg/actionmanager"
 	"github.com/kyma-project/kyma/components/kyma-operator/pkg/config"
 	internalerrors "github.com/kyma-project/kyma/components/kyma-operator/pkg/errors"
-	"github.com/kyma-project/kyma/components/kyma-operator/pkg/kymahelm"
 	"github.com/kyma-project/kyma/components/kyma-operator/pkg/kymainstallation"
 	"github.com/kyma-project/kyma/components/kyma-operator/pkg/kymasources"
 	"github.com/kyma-project/kyma/components/kyma-operator/pkg/overrides"
 	serviceCatalog "github.com/kyma-project/kyma/components/kyma-operator/pkg/servicecatalog"
 	"github.com/kyma-project/kyma/components/kyma-operator/pkg/statusmanager"
-	"github.com/kyma-project/kyma/components/kyma-operator/pkg/toolkit"
-	"k8s.io/client-go/kubernetes"
 )
 
 //InstallationSteps .
 type InstallationSteps struct {
-	helmClient          kymahelm.ClientInterface
-	kubeClientset       *kubernetes.Clientset
-	serviceCatalog      serviceCatalog.ClientInterface
-	errorHandlers       internalerrors.ErrorHandlersInterface
-	statusManager       statusmanager.StatusManager
-	actionManager       actionmanager.ActionManager
-	kymaCommandExecutor toolkit.CommandExecutor
-	kymaPackages        kymasources.KymaPackages
-
-	currentPackage   kymasources.KymaPackage
-	installedPackage kymasources.KymaPackage
+	serviceCatalog     serviceCatalog.ClientInterface
+	errorHandlers      internalerrors.ErrorHandlersInterface
+	statusManager      statusmanager.StatusManager
+	actionManager      actionmanager.ActionManager
+	stepFactoryCreator kymainstallation.StepFactoryCreator
+	backoffIntervals   []uint
 }
 
 // New .
-func New(helmClient kymahelm.ClientInterface, kubeClientset *kubernetes.Clientset,
-	serviceCatalog serviceCatalog.ClientInterface, statusManager statusmanager.StatusManager,
-	actionManager actionmanager.ActionManager, kymaCommandExecutor toolkit.CommandExecutor,
-	kymaPackages kymasources.KymaPackages) *InstallationSteps {
+func New(serviceCatalog serviceCatalog.ClientInterface,
+	statusManager statusmanager.StatusManager, actionManager actionmanager.ActionManager,
+	stepFactoryCreator kymainstallation.StepFactoryCreator, backoffIntervals []uint) *InstallationSteps {
 	steps := &InstallationSteps{
-		helmClient:          helmClient,
-		kubeClientset:       kubeClientset,
-		serviceCatalog:      serviceCatalog,
-		errorHandlers:       &internalerrors.ErrorHandlers{},
-		statusManager:       statusManager,
-		actionManager:       actionManager,
-		kymaCommandExecutor: kymaCommandExecutor,
-		kymaPackages:        kymaPackages,
+		serviceCatalog:     serviceCatalog,
+		errorHandlers:      &internalerrors.ErrorHandlers{},
+		statusManager:      statusManager,
+		actionManager:      actionManager,
+		stepFactoryCreator: stepFactoryCreator,
+		backoffIntervals:   backoffIntervals,
 	}
 
 	return steps
@@ -53,22 +45,21 @@ func New(helmClient kymahelm.ClientInterface, kubeClientset *kubernetes.Clientse
 //InstallKyma .
 func (steps *InstallationSteps) InstallKyma(installationData *config.InstallationData, overrideData overrides.OverrideData) error {
 
-	currentPackage, downloadKymaErr := steps.EnsureKymaSources(installationData)
-	if downloadKymaErr != nil {
-		return downloadKymaErr
-	}
-	steps.currentPackage = currentPackage
-
 	_ = steps.statusManager.InProgress("Verify installed components")
 
-	stepsFactory, factoryErr := kymainstallation.NewInstallStepFactory(currentPackage.GetChartsDirPath(), steps.helmClient, overrideData)
+	legacyKymaSourceConfig := kymasources.LegacyKymaSourceConfig{
+		KymaURL:     installationData.URL,
+		KymaVersion: installationData.KymaVersion,
+	}
+
+	stepsFactory, factoryErr := steps.stepFactoryCreator.NewInstallStepFactory(overrideData, legacyKymaSourceConfig)
 	if factoryErr != nil {
 		_ = steps.statusManager.Error("Kyma Operator", "Verify installed components", factoryErr)
 		return factoryErr
 	}
 
 	err := steps.processComponents(installationData, stepsFactory)
-	if steps.errorHandlers.CheckError("install/update error: ", err) {
+	if err != nil {
 		return err
 	}
 
@@ -88,7 +79,7 @@ func (steps *InstallationSteps) UninstallKyma(installationData *config.Installat
 
 	_ = steps.statusManager.InProgress("Verify components to uninstall")
 
-	stepsFactory, factoryErr := kymainstallation.NewUninstallStepFactory(steps.helmClient)
+	stepsFactory, factoryErr := steps.stepFactoryCreator.NewUninstallStepFactory()
 	if factoryErr != nil {
 		_ = steps.statusManager.Error("Kyma Operator", "Verify components to uninstall", factoryErr)
 		return factoryErr
@@ -118,6 +109,14 @@ func (steps *InstallationSteps) processComponents(installationData *config.Insta
 
 	log.Println("Processing Kyma components")
 
+	removeLabelAndReturn := func(err error) error {
+		removeLabelError := steps.actionManager.RemoveActionLabel(installationData.Context.Name, installationData.Context.Namespace, "action")
+		if steps.errorHandlers.CheckError("Error on removing label: ", removeLabelError) {
+			err = fmt.Errorf("%v; Error on removing label: %v", err, removeLabelError)
+		}
+		return err
+	}
+
 	logPrefix := installationData.Action
 
 	for _, component := range installationData.Components {
@@ -129,22 +128,29 @@ func (steps *InstallationSteps) processComponents(installationData *config.Insta
 
 		steps.PrintStep(stepName)
 
-		processErr := step.Run()
-		if steps.errorHandlers.CheckError("Step error: ", processErr) {
-			_ = steps.statusManager.Error(component.GetReleaseName(), stepName, processErr)
-			return processErr
+		err := retry.Do(
+			func() error {
+				processErr := step.Run()
+				if steps.errorHandlers.CheckError("Step error: ", processErr) {
+					_ = steps.statusManager.Error(component.GetReleaseName(), stepName, processErr)
+					return processErr
+				}
+				return nil
+			},
+			retry.Attempts(uint(len(steps.backoffIntervals))+1),
+			retry.DelayType(func(attempt uint, config *retry.Config) time.Duration {
+				log.Printf("Warning: Retry number %d (sleeping for %d[s]).\n", attempt+1, steps.backoffIntervals[attempt])
+				return time.Duration(steps.backoffIntervals[attempt]) * time.Second
+			}),
+		)
+		if err != nil {
+			return removeLabelAndReturn(fmt.Errorf("Max number of retries reached during step: %s", stepName))
 		}
 
 		log.Println(stepName + "...DONE!")
-
-	}
-
-	err := steps.actionManager.RemoveActionLabel(installationData.Context.Name, installationData.Context.Namespace, "action")
-	if steps.errorHandlers.CheckError("Error on removing label: ", err) {
-		return err
 	}
 
 	log.Println(logPrefix + " Kyma components ...DONE!")
 
-	return nil
+	return removeLabelAndReturn(nil)
 }

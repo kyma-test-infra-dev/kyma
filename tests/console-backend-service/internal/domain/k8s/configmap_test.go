@@ -8,7 +8,6 @@ import (
 
 	tester "github.com/kyma-project/kyma/tests/console-backend-service"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/client"
-	"github.com/kyma-project/kyma/tests/console-backend-service/internal/dex"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/domain/shared/auth"
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/graphql"
 	"github.com/kyma-project/kyma/tests/console-backend-service/pkg/retrier"
@@ -22,8 +21,7 @@ import (
 )
 
 const (
-	configMapName      = "test-config-map"
-	configMapNamespace = "console-backend-service-config-map"
+	configMapName = "test-config-map"
 )
 
 type ConfigMapEvent struct {
@@ -56,7 +54,7 @@ type configMap struct {
 }
 
 func TestConfigMap(t *testing.T) {
-	dex.SkipTestIfSCIEnabled(t)
+	t.Skip("skipping unstable test")
 
 	c, err := graphql.New()
 	require.NoError(t, err)
@@ -64,27 +62,17 @@ func TestConfigMap(t *testing.T) {
 	k8sClient, _, err := client.NewClientWithConfig()
 	require.NoError(t, err)
 
-	t.Log("Creating namespace...")
-	_, err = k8sClient.Namespaces().Create(fixNamespace(configMapNamespace))
-	require.NoError(t, err)
-
-	defer func() {
-		t.Log("Deleting namespace...")
-		err = k8sClient.Namespaces().Delete(configMapNamespace, &metav1.DeleteOptions{})
-		require.NoError(t, err)
-	}()
-
 	t.Log("Subscribing to config maps...")
 	subscription := c.Subscribe(fixConfigMapSubscription())
 	defer subscription.Close()
 
 	t.Log("Creating config map...")
-	_, err = k8sClient.ConfigMaps(configMapNamespace).Create(fixConfigMap(configMapName, configMapNamespace))
+	_, err = k8sClient.ConfigMaps(testNamespace).Create(fixConfigMap(configMapName))
 	require.NoError(t, err)
 
 	t.Log("Retrieving config map...")
 	err = waiter.WaitAtMost(func() (bool, error) {
-		_, err := k8sClient.ConfigMaps(configMapNamespace).Get(configMapName, metav1.GetOptions{})
+		_, err := k8sClient.ConfigMaps(testNamespace).Get(configMapName, metav1.GetOptions{})
 		if err == nil {
 			return true, nil
 		}
@@ -101,14 +89,14 @@ func TestConfigMap(t *testing.T) {
 	err = c.Do(fixConfigMapQuery(), &configMapRes)
 	require.NoError(t, err)
 	assert.Equal(t, configMapName, configMapRes.ConfigMap.Name)
-	assert.Equal(t, configMapNamespace, configMapRes.ConfigMap.Namespace)
+	assert.Equal(t, testNamespace, configMapRes.ConfigMap.Namespace)
 
 	t.Log("Querying for config maps...")
 	var configMapsRes configMapsQueryResponse
 	err = c.Do(fixConfigMapsQuery(), &configMapsRes)
 	require.NoError(t, err)
 	assert.Equal(t, configMapName, configMapsRes.ConfigMaps[0].Name)
-	assert.Equal(t, configMapNamespace, configMapsRes.ConfigMaps[0].Namespace)
+	assert.Equal(t, testNamespace, configMapsRes.ConfigMaps[0].Namespace)
 
 	t.Log("Updating...")
 	var updateRes updateConfigMapMutationResponse
@@ -130,7 +118,7 @@ func TestConfigMap(t *testing.T) {
 	}, retrier.UpdateRetries)
 	require.NoError(t, err)
 	assert.Equal(t, configMapName, updateRes.UpdateConfigMap.Name)
-	assert.Equal(t, configMapNamespace, updateRes.UpdateConfigMap.Namespace)
+	assert.Equal(t, testNamespace, updateRes.UpdateConfigMap.Namespace)
 
 	t.Log("Checking subscription for updated config map...")
 	expectedEvent = configMapEvent("UPDATE", configMap{Name: configMapName})
@@ -141,11 +129,11 @@ func TestConfigMap(t *testing.T) {
 	err = c.Do(fixDeleteConfigMapMutation(), &deleteRes)
 	require.NoError(t, err)
 	assert.Equal(t, configMapName, deleteRes.DeleteConfigMap.Name)
-	assert.Equal(t, configMapNamespace, deleteRes.DeleteConfigMap.Namespace)
+	assert.Equal(t, testNamespace, deleteRes.DeleteConfigMap.Namespace)
 
 	t.Log("Waiting for deletion...")
 	err = waiter.WaitAtMost(func() (bool, error) {
-		_, err := k8sClient.ConfigMaps(configMapNamespace).Get(configMapName, metav1.GetOptions{})
+		_, err := k8sClient.ConfigMaps(testNamespace).Get(configMapName, metav1.GetOptions{})
 		if errors.IsNotFound(err) {
 			return true, nil
 		}
@@ -171,11 +159,11 @@ func TestConfigMap(t *testing.T) {
 	as.Run(t, ops)
 }
 
-func fixConfigMap(name, namespace string) *v1.ConfigMap {
+func fixConfigMap(name string) *v1.ConfigMap {
 	return &v1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: namespace,
+			Namespace: testNamespace,
 		},
 	}
 }
@@ -192,7 +180,7 @@ func fixConfigMapQuery() *graphql.Request {
 			}`
 	req := graphql.NewRequest(query)
 	req.SetVar("name", configMapName)
-	req.SetVar("namespace", configMapNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }
@@ -208,7 +196,7 @@ func fixConfigMapsQuery() *graphql.Request {
 				}
 			}`
 	req := graphql.NewRequest(query)
-	req.SetVar("namespace", configMapNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }
@@ -223,7 +211,7 @@ func fixConfigMapSubscription() *graphql.Request {
 				}
 			}`
 	req := graphql.NewRequest(query)
-	req.SetVar("namespace", configMapNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }
@@ -240,7 +228,7 @@ func fixUpdateConfigMapMutation(configMap string) *graphql.Request {
 				}`
 	req := graphql.NewRequest(mutation)
 	req.SetVar("name", configMapName)
-	req.SetVar("namespace", configMapNamespace)
+	req.SetVar("namespace", testNamespace)
 	req.SetVar("configMap", configMap)
 
 	return req
@@ -258,7 +246,7 @@ func fixDeleteConfigMapMutation() *graphql.Request {
 				}`
 	req := graphql.NewRequest(mutation)
 	req.SetVar("name", configMapName)
-	req.SetVar("namespace", configMapNamespace)
+	req.SetVar("namespace", testNamespace)
 
 	return req
 }

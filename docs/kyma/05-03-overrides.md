@@ -3,8 +3,8 @@ title: Helm overrides for Kyma installation
 type: Configuration
 ---
 
-Kyma packages its components into [Helm](https://github.com/helm/helm/tree/master/docs) charts that the [Kyma Operator](https://github.com/kyma-project/kyma/tree/master/components/kyma-operator) uses during installation and updates.
-This document describes how to configure the Kyma Installer with new values for Helm [charts](https://github.com/helm/helm/blob/master/docs/charts.md) to override the default settings in `values.yaml` files.
+Kyma packages its components into [Helm](https://helm.sh/docs/) charts that the [Kyma Operator](https://github.com/kyma-project/kyma/tree/master/components/kyma-operator) uses during installation and updates.
+This document describes how to configure the Kyma Installer with new values for Helm [charts](https://v2.helm.sh/docs/developing_charts/) to override the default settings in `values.yaml` files.
 
 ## Overview
 
@@ -43,9 +43,9 @@ Kyma uses component-specific overrides only for the installation of specific com
 
 Overrides for top-level charts are straightforward. Just use the template value from the chart as the entry key in the ConfigMap or Secret. Leave out the `.Values.` prefix.
 
-Se an example:
+See the example:
 
-The Installer uses an `asset-store` top-level chart that contains a template with the following value reference:
+The Installer uses a `rafter` top-level chart that contains a template with the following value reference:
 
 ```
 resources: {{ toYaml .Values.resources | indent 12 }}
@@ -70,26 +70,26 @@ cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: assetstore-overrides
+  name: rafter-overrides
   namespace: kyma-installer
   labels:
     installer: overrides
-    component: assetstore
+    component: rafter
     kyma-project.io/installation: ""
 data:
-  minio.resources.limits.memory: 512Mi #increased from 128Mi
-  minio.resources.limits.cpu: 250m #increased from 100m
+  controller-manager.minio.resources.limits.memory: 512Mi #increased from 128Mi
+  controller-manager.minio.resources.limits.cpu: 250m #increased from 100m
 EOF
 ```
 
-Once the installation starts, the Kyma Operator generates overrides based on the ConfigMap entries. The system uses the values of `512Mi` instead of the default `128Mi` for Minio memory and `250m` instead of `100m` for Minio CPU from the chart's `values.yaml` file.
+Once the installation starts, the Kyma Operator generates overrides based on the ConfigMap entries. The system uses the values of `512Mi` instead of the default `128Mi` for MinIO memory and `250m` instead of `100m` for MinIO CPU from the chart's `values.yaml` file.
 
 For overrides that the system should keep in Secrets, just define a Secret object instead of a ConfigMap with the same key and a base64-encoded value. Be sure to label the Secret.
 
 If you add the overrides in the runtime, trigger the update process using this command:
 
 ```
-kubectl label installation/kyma-installation action=install
+kubectl -n default label installation/kyma-installation action=install
 ```
 
 ### Sub-chart overrides
@@ -101,44 +101,45 @@ When a sub-chart contains the `values.yaml` file, the information about the char
 The situation is different when the Kyma Operator installs a chart with sub-charts.
 All template values for a sub-chart must be prefixed with a sub-chart "path" that is relative to the top-level "parent" chart.
 
-This is not an Kyma Operator-specific requirement. The same considerations apply when you provide overrides manually using the `helm` command-line tool.
+This is not a Kyma Operator-specific requirement. The same considerations apply when you provide overrides manually using the `helm` command-line tool.
 
-Here is an example.
-There's a `core` top-level chart that the Kyma Installer installs.
-There's an `application-connector` sub-chart in `core` with a nested `connector-service` sub-chart.
-In one of its templates, there's a following fragment:
+For example, there's the `connector-service` sub-chart nested in the `application-connector` chart installed by default as part of the [Kyma package](#installation-overview).
+In its `deployment.yaml`, there's the following fragment:
 
 ```
 spec:
+  serviceAccountName: {{ .Chart.Name }}
   containers:
   - name: {{ .Chart.Name }}
-	args:
-	  - "/connectorservice"
-	  - '--appName={{ .Chart.Name }}'
-	  - "--domainName={{ .Values.global.domainName }}"
-	  - "--tokenExpirationMinutes={{ .Values.deployment.args.tokenExpirationMinutes }}"
+    image: {{ .Values.global.containerRegistry.path }}/{{ .Values.global.connector_service.dir }}connector-service:{{ .Values.global.connector_service.version }}
+    imagePullPolicy: {{ .Values.deployment.image.pullPolicy }}
+    args:
+      ...
+      - "--appTokenExpirationMinutes={{ .Values.deployment.args.appTokenExpirationMinutes }}"
 ```
 
-This fragment of the `values.yaml` file in the `connector-service` chart defines the default value for `tokenExpirationMinutes`:
+This fragment of the `values.yaml` file in the `connector-service` chart defines the default value for `appTokenExpirationMinutes`:
 
 ```
 deployment:
+  ...
   args:
-    tokenExpirationMinutes: 60
+    ...
+    appTokenExpirationMinutes: 5
 ```
 
-To override this value, and change it from `60` to `90`, do the following:
+To override this value and change it from `5` to `10`, do the following:
 
-- Create a ConfigMap in the `kyma-installer` Namespace and label it.
-- Add the `application-connector.connector-service.deployment.args.tokenExpirationMinutes: 90` entry to the ConfigMap.
+1. Create a ConfigMap in the `kyma-installer` Namespace and label it.
+2. Name it after the main component chart in the `resources` folder and add the `-overrides` suffix to it. In this example, that would be `application-connector-overrides`.
+3. Add the `connector-service.deployment.args.appTokenExpirationMinutes: 10` entry under the **data** field in the ConfigMap.
 
 Notice that the user-provided override key now contains two parts:
 
-- The chart "path" inside the top-level `core` chart called `application-connector.connector-service`
-- The original template value reference from the chart without the `.Values.` prefix, `deployment.args.tokenExpirationMinutes`.
+- The chart "path" inside the top-level `application-connector` chart called `connector-service`
+- The original template value reference from the chart without the `.Values.` prefix, `deployment.args.appTokenExpirationMinutes`
 
-Once the installation starts, the Kyma Operator generates overrides based on the ConfigMap entries. The system uses the value of `90` instead of the default value of `60` from the `values.yaml` chart file.
-
+Once the installation starts, the Kyma Operator generates overrides based on the ConfigMap entries. The system uses the value of `10` instead of the default value of `5` from the `values.yaml` chart file.
 
 ## Global overrides
 

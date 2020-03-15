@@ -1,8 +1,8 @@
 name: dex
-version: 0.0.2
+version: 0.0.3
 description: DEX for Kyma
 keywords:
   - dex
   - oidc
   - kyma
-appVersion: v2.9.0
+appVersion: "9cf01d67"

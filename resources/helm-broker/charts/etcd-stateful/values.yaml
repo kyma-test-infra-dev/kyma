@@ -1,10 +1,6 @@
-tlsSetup:
-  image: "eu.gcr.io/kyma-project/etcd-tls-setup"
-  imageTag: "0.3.367"
-
 etcd:
   image: "quay.io/coreos/etcd"
-  imageTag: "v3.3.9"
+  imageTag: "v3.3.18"
   secure: false
   resources:
     limits:

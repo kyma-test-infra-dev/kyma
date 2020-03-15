@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	stdflag "flag"
 	"fmt"
@@ -12,9 +13,14 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gorilla/handlers"
+	"github.com/kyma-project/kyma/components/apiserver-proxy/cmd/proxy/reload"
+	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/monitoring"
 	"github.com/kyma-project/kyma/components/apiserver-proxy/internal/spdy"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/golang/glog"
 	"github.com/hkwi/h2c"
@@ -24,11 +30,11 @@ import (
 	flag "github.com/spf13/pflag"
 	"golang.org/x/net/http2"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
-	k8sapiflag "k8s.io/apiserver/pkg/util/flag"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	certutil "k8s.io/client-go/util/cert"
+	cliflag "k8s.io/component-base/cli/flag"
 )
 
 const (
@@ -49,6 +55,7 @@ type config struct {
 	tls                   tlsConfig
 	kubeconfigLocation    string
 	cors                  corsConfig
+	metricsListenAddress  string
 }
 
 type tlsConfig struct {
@@ -131,6 +138,10 @@ func main() {
 	flagset.StringSliceVar(&cfg.cors.allowOrigin, "cors-allow-origin", []string{"*"}, "List of CORS allowed origins")
 	flagset.StringSliceVar(&cfg.cors.allowMethods, "cors-allow-methods", []string{"GET", "POST", "PUT", "DELETE"}, "List of CORS allowed methods")
 	flagset.StringSliceVar(&cfg.cors.allowHeaders, "cors-allow-headers", []string{"Authorization", "Content-Type"}, "List of CORS allowed headers")
+
+	// Prometheus
+	flagset.StringVar(&cfg.metricsListenAddress, "metrics-listen-address", "", "The address the metric endpoint binds to.")
+
 	flagset.Parse(os.Args[1:])
 	kcfg := initKubeConfig(cfg.kubeconfigLocation)
 
@@ -139,40 +150,40 @@ func main() {
 		glog.Fatalf("Failed to build parse upstream URL: %v", err)
 	}
 
-	spdyProxy := spdy.New(kcfg, upstreamURL)
+	spdyMetrics := monitoring.NewSPDYMetrics()
+	spdyProxy := spdy.New(kcfg, upstreamURL, spdyMetrics)
 
 	kubeClient, err := kubernetes.NewForConfig(kcfg)
 	if err != nil {
 		glog.Fatalf("Failed to instantiate Kubernetes client: %v", err)
 	}
 
-	var authenticator authenticator.Request
+	var oidcAuthenticator authenticator.Request
+
+	fileWatcherCtx, fileWatcherCtxCancel := context.WithCancel(context.Background())
+
 	// If OIDC configuration provided, use oidc authenticator
 	if cfg.auth.Authentication.OIDC.IssuerURL != "" {
-		authenticator, err = authn.NewOIDCAuthenticator(cfg.auth.Authentication.OIDC)
+
+		oidcAuthenticator, err = setupOIDCAuthReloader(fileWatcherCtx, cfg.auth.Authentication.OIDC)
 		if err != nil {
 			glog.Fatalf("Failed to instantiate OIDC authenticator: %v", err)
 		}
-
 	} else {
 		//Use Delegating authenticator
-
 		tokenClient := kubeClient.AuthenticationV1beta1().TokenReviews()
-		authenticator, err = authn.NewDelegatingAuthenticator(tokenClient, cfg.auth.Authentication)
+		oidcAuthenticator, err = authn.NewDelegatingAuthenticator(tokenClient, cfg.auth.Authentication)
 		if err != nil {
 			glog.Fatalf("Failed to instantiate delegating authenticator: %v", err)
 		}
-
 	}
 
-	sarClient := kubeClient.AuthorizationV1beta1().SubjectAccessReviews()
-	authorizer, err := authz.NewAuthorizer(sarClient)
-
+	metrics, err := monitoring.NewProxyMetrics()
 	if err != nil {
-		glog.Fatalf("Failed to create authorizer: %v", err)
+		glog.Fatalf("Failed to create metrics: %v", err)
 	}
 
-	authProxy := proxy.New(cfg.auth, authorizer, authenticator)
+	authProxy := proxy.New(cfg.auth, nil, oidcAuthenticator, metrics)
 
 	if err != nil {
 		glog.Fatalf("Failed to create rbac-proxy: %v", err)
@@ -183,6 +194,18 @@ func main() {
 	rp, err := newReverseProxy(upstreamURL, kcfg, proxyForApiserver)
 	if err != nil {
 		glog.Fatalf("Unable to create reverse proxy, %s", err)
+	}
+
+	//Prometheus
+	prometheusRegistry := prometheus.NewRegistry()
+	err = prometheusRegistry.Register(prometheus.NewGoCollector())
+	if err != nil {
+		glog.Fatalf("failed to register Go runtime metrics: %v", err)
+	}
+
+	err = prometheusRegistry.Register(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	if err != nil {
+		glog.Fatalf("failed to register process metrics: %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -201,6 +224,7 @@ func main() {
 
 	if cfg.secureListenAddress != "" {
 		srv := &http.Server{Handler: getCORSHandler(mux, cfg.cors)}
+
 		if cfg.tls.certFile == "" && cfg.tls.keyFile == "" {
 			glog.Info("Generating self signed cert as no cert is provided")
 			certBytes, keyBytes, err := certutil.GenerateSelfSignedCertKey("", nil, nil)
@@ -217,7 +241,7 @@ func main() {
 				glog.Fatalf("TLS version invalid: %v", err)
 			}
 
-			cipherSuiteIDs, err := k8sapiflag.TLSCipherSuites(cfg.tls.cipherSuites)
+			cipherSuiteIDs, err := cliflag.TLSCipherSuites(cfg.tls.cipherSuites)
 			if err != nil {
 				glog.Fatalf("Failed to convert TLS cipher suite name to ID: %v", err)
 			}
@@ -229,6 +253,16 @@ func main() {
 				// See net/http.Server.shouldConfigureHTTP2ForServe for more context
 				NextProtos: []string{"h2"},
 			}
+		} else {
+			certReloader, err := setupTLSCertReloader(fileWatcherCtx, cfg.tls.certFile, cfg.tls.keyFile)
+			if err != nil {
+				glog.Fatalf("Failed to create ReloadableTLSCertProvider: %v", err)
+			}
+
+			//Configure srv with GetCertificate function
+			srv.TLSConfig = &tls.Config{
+				GetCertificate: certReloader.GetCertificateFunc,
+			}
 		}
 
 		l, err := net.Listen("tcp", cfg.secureListenAddress)
@@ -236,7 +270,19 @@ func main() {
 			glog.Fatalf("Failed to listen on secure address: %v", err)
 		}
 		glog.Infof("Listening securely on %v", cfg.secureListenAddress)
-		go srv.ServeTLS(l, cfg.tls.certFile, cfg.tls.keyFile)
+
+		go srv.ServeTLS(l, "", "")
+	}
+
+	if cfg.metricsListenAddress != "" {
+		srv := &http.Server{Handler: promhttp.Handler()}
+
+		l, err := net.Listen("tcp", cfg.metricsListenAddress)
+		if err != nil {
+			glog.Fatalf("Failed to listen on insecure address: %v", err)
+		}
+		glog.Infof("Listening for metrics on %v", cfg.metricsListenAddress)
+		go srv.Serve(l)
 	}
 
 	if cfg.insecureListenAddress != "" {
@@ -303,7 +349,11 @@ func main() {
 	select {
 	case <-term:
 		glog.Info("Received SIGTERM, exiting gracefully...")
+		fileWatcherCtxCancel()
 	}
+
+	//Allow for file watchers to close gracefully
+	time.Sleep(1 * time.Second)
 }
 
 // Returns intiliazed config, allows local usage (outside cluster) based on provided kubeconfig or in-cluter
@@ -353,4 +403,47 @@ func deleteUpstreamCORSHeaders(r *http.Response) error {
 		r.Header.Del(h)
 	}
 	return nil
+}
+
+func setupOIDCAuthReloader(fileWatcherCtx context.Context, cfg *authn.OIDCConfig) (authenticator.Request, error) {
+	const eventBatchDelaySeconds = 10
+	filesToWatch := []string{cfg.CAFile}
+
+	cancelableAuthReqestConstructor := func() (authn.CancelableAuthRequest, error) {
+		glog.Infof("creating new cancelable instance of authenticator.Request...")
+		return authn.NewOIDCAuthenticator(cfg)
+	}
+
+	//Create reloader
+	result, err := reload.NewCancelableAuthReqestReloader(cancelableAuthReqestConstructor)
+	if err != nil {
+		return nil, err
+	}
+
+	//Setup file watcher
+	oidcCAFileWatcher := reload.NewWatcher("oidc-ca-dex-tls-cert", filesToWatch, eventBatchDelaySeconds, result.Reload)
+	go oidcCAFileWatcher.Run(fileWatcherCtx)
+
+	return result, nil
+}
+
+func setupTLSCertReloader(fileWatcherCtx context.Context, certFile, keyFile string) (*reload.TLSCertReloader, error) {
+	const eventBatchDelaySeconds = 10
+
+	tlsConstructor := func() (*tls.Certificate, error) {
+		glog.Infof("Creating new TLS Certificate from data files: %s, %s", certFile, keyFile)
+		res, err := tls.LoadX509KeyPair(certFile, keyFile)
+		return &res, err
+	}
+	//Create reloader
+	result, err := reload.NewTLSCertReloader(tlsConstructor)
+	if err != nil {
+		return nil, err
+	}
+
+	//Start file watcher for certificate files
+	tlsCertFileWatcher := reload.NewWatcher("main-tls-crt/key", []string{certFile, keyFile}, eventBatchDelaySeconds, result.Reload)
+	go tlsCertFileWatcher.Run(fileWatcherCtx)
+
+	return result, nil
 }

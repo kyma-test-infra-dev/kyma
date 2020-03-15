@@ -2,11 +2,10 @@ package applicationaccess
 
 import (
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/kyma-project/kyma/tests/application-connector-tests/test/testkit/util"
 
 	"github.com/kyma-project/kyma/tests/application-connector-tests/test/testkit/services"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -20,7 +19,6 @@ import (
 	"github.com/kyma-project/kyma/components/application-operator/pkg/client/clientset/versioned/typed/applicationconnector/v1alpha1"
 	tokenreqversioned "github.com/kyma-project/kyma/components/connection-token-handler/pkg/client/clientset/versioned"
 	tokenreqclient "github.com/kyma-project/kyma/components/connection-token-handler/pkg/client/clientset/versioned/typed/applicationconnector/v1alpha1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	tokenreq "github.com/kyma-project/kyma/components/connection-token-handler/pkg/apis/applicationconnector/v1alpha1"
@@ -112,8 +110,8 @@ func (ts *TestSuite) PrepareTestApplication(t *testing.T, namePrefix string) *ty
 	name := fmt.Sprintf("%s-%s", namePrefix, rand.String(4))
 
 	application := &types.Application{
-		TypeMeta: v1.TypeMeta{Kind: "Application", APIVersion: types.SchemeGroupVersion.String()},
-		ObjectMeta: v1.ObjectMeta{
+		TypeMeta: metav1.TypeMeta{Kind: "Application", APIVersion: types.SchemeGroupVersion.String()},
+		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 		Spec: types.ApplicationSpec{
@@ -151,10 +149,10 @@ func (ts *TestSuite) WaitForApplicationToBeDeployed(t *testing.T, applicationNam
 
 func (ts *TestSuite) getInfoURL(t *testing.T, application *types.Application) string {
 	tokenRequest := &tokenreq.TokenRequest{
-		TypeMeta:   v1.TypeMeta{Kind: "TokenRequest", APIVersion: tokenreq.SchemeGroupVersion.String()},
-		ObjectMeta: v1.ObjectMeta{Name: application.Name},
+		TypeMeta:   metav1.TypeMeta{Kind: "TokenRequest", APIVersion: tokenreq.SchemeGroupVersion.String()},
+		ObjectMeta: metav1.ObjectMeta{Name: application.Name},
 		Context:    tokenreq.ClusterContext{Group: application.Spec.Group, Tenant: application.Spec.Tenant},
-		Status:     tokenreq.TokenRequestStatus{ExpireAfter: v1.Date(2999, time.December, 12, 12, 12, 12, 12, time.Local)},
+		Status:     tokenreq.TokenRequestStatus{ExpireAfter: metav1.Date(2999, time.December, 12, 12, 12, 12, 12, time.Local)},
 	}
 
 	tokenRequest, err := ts.tokenRequestClient.Create(tokenRequest)
@@ -165,7 +163,7 @@ func (ts *TestSuite) getInfoURL(t *testing.T, application *types.Application) st
 
 	err = testkit.WaitForFunction(defaultCheckInterval, csrInfoURLRetrievalTimeout, func() bool {
 		t.Log("Waiting for Info URL in Token Request...")
-		tokenRequest, err = ts.tokenRequestClient.Get(tokenRequestName, v1.GetOptions{})
+		tokenRequest, err = ts.tokenRequestClient.Get(tokenRequestName, metav1.GetOptions{})
 		return err == nil && tokenRequest.Status.State == "OK"
 	})
 	require.NoError(t, err)
@@ -184,13 +182,44 @@ func (ts *TestSuite) EstablishMTLSConnection(t *testing.T, application *types.Ap
 
 func (ts *TestSuite) ShouldAccessApplication(t *testing.T, credentials connector.ApplicationCredentials, urls connector.ManagementInfoURLs) {
 	applicationConnectorClient := services.NewApplicationConnectorClient(credentials, urls, ts.skipSSLVerify)
-	apis, errorResponse := applicationConnectorClient.GetAllAPIs(t)
-	util.RequireNoError(t, errorResponse)
+
+	var apis []services.Service
+	var errorResponse *services.ErrorResponse
+	err := testkit.Retry(testkit.DefaultRetryConfig, func() (bool, error) {
+		apis, errorResponse = applicationConnectorClient.GetAllAPIs(t)
+		if errorResponse == nil {
+			return false, nil
+		}
+
+		if errorResponse.Code == http.StatusServiceUnavailable || errorResponse.Code == http.StatusNotFound {
+			t.Logf("Application Registry not ready, received %d status", errorResponse.Code)
+			return true, nil
+		}
+
+		return false, fmt.Errorf("failed to get all APIs. Status: %d, Error: %s", errorResponse.Code, errorResponse.Error)
+	})
+	require.NoError(t, err)
+	services.RequireNoError(t, errorResponse)
 	require.NotNil(t, apis)
 
+	var publishResponse services.PublishResponse
 	eventId := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	publishResponse, errorResponse := applicationConnectorClient.SendEvent(t, eventId)
-	util.RequireNoError(t, errorResponse)
+	err = testkit.Retry(testkit.DefaultRetryConfig, func() (bool, error) {
+		publishResponse, errorResponse = applicationConnectorClient.SendEvent(t, eventId)
+		if errorResponse == nil {
+			return false, nil
+		}
+
+		if errorResponse.Code == http.StatusServiceUnavailable || errorResponse.Code == http.StatusNotFound {
+			t.Logf("Event Service not ready, received %d status", errorResponse.Code)
+			return true, nil
+		}
+
+		return false, fmt.Errorf("failed to send Event. Status: %d, Error: %s", errorResponse.Code, errorResponse.Error)
+	})
+	require.NoError(t, err)
+	services.RequireNoError(t, errorResponse)
+
 	require.Equal(t, eventId, publishResponse.EventID)
 }
 

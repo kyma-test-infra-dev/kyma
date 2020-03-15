@@ -2,20 +2,22 @@ deployment:
   image:
     pullPolicy: IfNotPresent
   args:
-    proxyPort: &proxyPort 8080
+    proxyPort: 8080
     externalAPIPort: &externalAPIPort 8081
-    uploadServiceURL:  http://assetstore-asset-upload-service.kyma-system.svc.cluster.local:3000
+    uploadServiceURL: http://rafter-upload-service.kyma-system.svc.cluster.local:80
     requestTimeout: 10
     requestLogging: false
-    specRequestTimeout: 5
-    assetstoreRequestTimeout: 5
+    specRequestTimeout: 20
+    rafterRequestTimeout: 20
     insecureAssetDownload: true
     insecureSpecDownload: false
+    detailedErrorResponse: false
 
 service:
   externalapi:
     port: *externalAPIPort
 
 tests:
+  enabled: true
   image:
     pullPolicy: IfNotPresent

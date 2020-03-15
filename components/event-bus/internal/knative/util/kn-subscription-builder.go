@@ -1,41 +1,47 @@
 package util
 
 import (
-	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	messagingv1alpha1 "knative.dev/eventing/pkg/apis/messaging/v1alpha1"
+	"knative.dev/pkg/apis"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 )
 
 // SubscriptionBuilder represents the subscription builder that is used in the internal knative util package
 // and the knative subscription controller tests.
 type SubscriptionBuilder struct {
-	*eventingv1alpha1.Subscription
+	*messagingv1alpha1.Subscription
 }
 
 // Build returns an v1alpha1.Subscription instance.
-func (s *SubscriptionBuilder) Build() *eventingv1alpha1.Subscription {
+func (s *SubscriptionBuilder) Build() *messagingv1alpha1.Subscription {
 	return s.Subscription
 }
 
 // ToChannel sets SubscriptionBuilder Channel.
 func (s *SubscriptionBuilder) ToChannel(name string) *SubscriptionBuilder {
-	s.Spec.Channel = corev1.ObjectReference{
+	channel := corev1.ObjectReference{
 		Name:       name,
 		Kind:       "Channel",
-		APIVersion: "eventing.knative.dev/v1alpha1",
+		APIVersion: "messaging.knative.dev/v1alpha1",
 	}
+	s.Spec.Channel = channel
 	return s
 }
 
 // EmptyReply sets the SubscriptionBuilder Reply.
 func (s *SubscriptionBuilder) EmptyReply() *SubscriptionBuilder {
-	s.Spec.Reply = &eventingv1alpha1.ReplyStrategy{}
+	s.Spec.Reply = nil
 	return s
 }
 
 // ToK8sService sets the SubscriptionBuilder Subscriber to Kubernetes service.
 func (s *SubscriptionBuilder) ToK8sService(k8sServiceName string) *SubscriptionBuilder {
-	s.Spec.Subscriber = &eventingv1alpha1.SubscriberSpec{
+	s.Spec.Subscriber = &duckv1.Destination{
 		Ref: &corev1.ObjectReference{
 			Name:       k8sServiceName,
 			Kind:       "Service",
@@ -47,7 +53,7 @@ func (s *SubscriptionBuilder) ToK8sService(k8sServiceName string) *SubscriptionB
 
 // ToKNService sets the SubscriptionBuilder Subscriber to Knative service.
 func (s *SubscriptionBuilder) ToKNService(knServiceName string) *SubscriptionBuilder {
-	s.Spec.Subscriber = &eventingv1alpha1.SubscriberSpec{
+	s.Spec.Subscriber = &duckv1.Destination{
 		Ref: &corev1.ObjectReference{
 			Name:       knServiceName,
 			Kind:       "Service",
@@ -59,8 +65,13 @@ func (s *SubscriptionBuilder) ToKNService(knServiceName string) *SubscriptionBui
 
 // ToURI sets the SubscriptionBuilder Subscriber URI.
 func (s *SubscriptionBuilder) ToURI(uri *string) *SubscriptionBuilder {
-	s.Spec.Subscriber = &eventingv1alpha1.SubscriberSpec{
-		DNSName: uri,
+	url, err := apis.ParseURL(*uri)
+	if err != nil {
+		//TODO maybe not the best to panic here, instead return an error
+		panic(fmt.Sprintf("Couldn't parse the subscriber URI: %+v", err))
+	}
+	s.Spec.Subscriber = &duckv1.Destination{
+		URI: url,
 	}
 	return s
 }
@@ -70,37 +81,41 @@ var (
 )
 
 // Subscription returns a new SubscriptionBuilder instance.
-func Subscription(name string, namespace string) *SubscriptionBuilder {
-	subscription := &eventingv1alpha1.Subscription{
+func Subscription(name string, namespace string, labels map[string]string) *SubscriptionBuilder {
+	subscriberDestination := &duckv1.Destination{
+		Ref: &corev1.ObjectReference{
+			Name:       "",
+			Kind:       "Service",
+			APIVersion: "serving.knative.dev/v1alpha1",
+		},
+	}
+
+	channelDestination := &duckv1.Destination{
+		Ref: &corev1.ObjectReference{
+			Name:       "",
+			Kind:       "Channel",
+			APIVersion: "messaging.knative.dev/v1alpha1",
+		},
+	}
+
+	subscription := &messagingv1alpha1.Subscription{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: eventingv1alpha1.SchemeGroupVersion.String(),
+			APIVersion: messagingv1alpha1.SchemeGroupVersion.String(),
 			Kind:       "Subscription",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
 			Name:      name,
+			Labels:    labels,
 		},
-		Spec: eventingv1alpha1.SubscriptionSpec{
+		Spec: messagingv1alpha1.SubscriptionSpec{
 			Channel: corev1.ObjectReference{
 				Name:       "",
 				Kind:       "Channel",
-				APIVersion: "eventing.knative.dev/v1alpha1",
+				APIVersion: "messaging.knative.dev/v1alpha1",
 			},
-			Subscriber: &eventingv1alpha1.SubscriberSpec{
-				Ref: &corev1.ObjectReference{
-					Name:       "",
-					Kind:       "Service",
-					APIVersion: "serving.knative.dev/v1alpha1",
-				},
-				DNSName: &emptyString,
-			},
-			Reply: &eventingv1alpha1.ReplyStrategy{
-				Channel: &corev1.ObjectReference{
-					Name:       "",
-					Kind:       "Channel",
-					APIVersion: "serving.knative.dev/v1alpha1",
-				},
-			},
+			Subscriber: subscriberDestination,
+			Reply:      channelDestination,
 		},
 	}
 	return &SubscriptionBuilder{

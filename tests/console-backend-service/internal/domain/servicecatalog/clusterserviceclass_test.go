@@ -16,15 +16,14 @@ import (
 	"github.com/kyma-project/kyma/tests/console-backend-service/internal/resource"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-type clusterServiceClassesQueryResponse struct {
-	ClusterServiceClasses []shared.ClusterServiceClass
-}
 
 type clusterServiceClassQueryResponse struct {
 	ClusterServiceClass shared.ClusterServiceClass
+}
+
+type clusterServiceClassesQueryResponse struct {
+	ClusterServiceClasses []shared.ClusterServiceClass
 }
 
 func TestClusterServiceClassesQueries(t *testing.T) {
@@ -33,13 +32,13 @@ func TestClusterServiceClassesQueries(t *testing.T) {
 
 	expectedResource := clusterServiceClass()
 
-	cmsCli, _, err := client.NewDynamicClientWithConfig()
+	rafterCli, _, err := client.NewDynamicClientWithConfig()
 	require.NoError(t, err)
 
-	clusterDocsTopicClient := resource.NewClusterDocsTopic(cmsCli, t.Logf)
+	clusterAssetGroupClient := resource.NewClusterAssetGroup(rafterCli, t.Logf)
 
-	t.Log(fmt.Sprintf("Wait for clusterDocsTopic %s Ready", expectedResource.Name))
-	err = wait.ForClusterDocsTopicReady(expectedResource.Name, clusterDocsTopicClient.Get)
+	t.Log(fmt.Sprintf("Wait for ClusterAssetGroup %s Ready", expectedResource.Name))
+	err = wait.ForClusterAssetGroupReady(expectedResource.Name, clusterAssetGroupClient.Get)
 	require.NoError(t, err)
 
 	resourceDetailsQuery := `
@@ -68,7 +67,7 @@ func TestClusterServiceClassesQueries(t *testing.T) {
 			relatedClusterServiceClassName
 			instanceCreateParameterSchema
 		}
-		clusterDocsTopic {
+		clusterAssetGroup {
 			name
     		groupName
     		assets {
@@ -104,8 +103,12 @@ func TestClusterServiceClassesQueries(t *testing.T) {
 		checkClusterClass(t, expectedResource, res.ClusterServiceClass)
 	})
 
-	t.Log(fmt.Sprintf("Delete clusterDocsTopic %s", expectedResource.Name))
-	err = clusterDocsTopicClient.Delete(expectedResource.Name)
+	t.Log(fmt.Sprintf("Delete ClusterAssetGroup %s", expectedResource.Name))
+	err = clusterAssetGroupClient.Delete(expectedResource.Name)
+	require.NoError(t, err)
+
+	t.Log(fmt.Sprintf("Wait for ClusterAssetGroup %s Deletion", expectedResource.Name))
+	err = wait.ForClusterAssetGroupDeletion(expectedResource.Name, clusterAssetGroupClient.Get)
 	require.NoError(t, err)
 
 	t.Log("Checking authorization directives...")
@@ -127,9 +130,9 @@ func checkClusterClass(t *testing.T, expected, actual shared.ClusterServiceClass
 	require.NotEmpty(t, actual.Plans)
 	assertClusterPlanExistsAndEqual(t, actual.Plans, expected.Plans[0])
 
-	// ClusterDocsTopic
-	require.NotEmpty(t, actual.ClusterDocsTopic)
-	checkClusterDocsTopic(t, fixTestingBundleClusterDocsTopic(), actual.ClusterDocsTopic)
+	// ClusterAssetGroup
+	require.NotEmpty(t, actual.ClusterAssetGroup)
+	checkClusterAssetGroup(t, fixTestingBundleClusterAssetGroup(), actual.ClusterAssetGroup)
 }
 
 func checkClusterPlan(t *testing.T, expected, actual shared.ClusterServicePlan) {
@@ -143,7 +146,7 @@ func checkClusterPlan(t *testing.T, expected, actual shared.ClusterServicePlan) 
 	assert.Equal(t, expected.RelatedClusterServiceClassName, actual.RelatedClusterServiceClassName)
 }
 
-func checkClusterDocsTopic(t *testing.T, expected, actual shared.ClusterDocsTopic) {
+func checkClusterAssetGroup(t *testing.T, expected, actual shared.ClusterAssetGroup) {
 	// Name
 	assert.Equal(t, expected.Name, actual.Name)
 
@@ -227,14 +230,8 @@ func fixClusterServiceClassesRequest(resourceDetailsQuery string) *graphql.Reque
 	return req
 }
 
-func fixClusterDocsTopicMeta(name string) metav1.ObjectMeta {
-	return metav1.ObjectMeta{
-		Name: name,
-	}
-}
-
-func fixTestingBundleClusterDocsTopic() shared.ClusterDocsTopic {
-	return shared.ClusterDocsTopic{
+func fixTestingBundleClusterAssetGroup() shared.ClusterAssetGroup {
+	return shared.ClusterAssetGroup{
 		Name:        fixture.TestingBundleClassName,
 		DisplayName: "Documentation for testing-0.0.1",
 		Description: "Overall documentation",

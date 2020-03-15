@@ -25,7 +25,7 @@ spec:
     module.exports = {
         main: function (event, context) {
             blockCpuFor($FUNC_DELAY);
-            return event.data + ": Call to the function load-test was successful!";
+            return event.data + ": Call to the function size-l was successful!";
         }
     }
     function blockCpuFor(ms) {
@@ -52,7 +52,7 @@ spec:
         type: Resource
       minReplicas: 5
       scaleTargetRef:
-        apiVersion: apps/v1beta1
+        apiVersion: apps/v1
         kind: Deployment
         name: size-l
 ---

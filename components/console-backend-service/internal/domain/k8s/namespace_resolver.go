@@ -5,14 +5,15 @@ import (
 
 	"github.com/golang/glog"
 	appPretty "github.com/kyma-project/kyma/components/console-backend-service/internal/domain/application/pretty"
+	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/k8s/listener"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/k8s/pretty"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/domain/shared"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlerror"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/gqlschema"
 	"github.com/kyma-project/kyma/components/console-backend-service/internal/module"
+	"github.com/kyma-project/kyma/components/console-backend-service/pkg/resource"
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 //go:generate mockery -name=namespaceSvc -output=automock -outpkg=automock -case=underscore
@@ -22,50 +23,28 @@ type namespaceSvc interface {
 	List() ([]*v1.Namespace, error)
 	Find(name string) (*v1.Namespace, error)
 	Delete(name string) error
-}
-
-//go:generate mockery -name=gqlNamespaceConverter -output=automock -outpkg=automock -case=underscore
-type gqlNamespaceConverter interface {
-	ToGQLs(in []*v1.Namespace) ([]gqlschema.Namespace, error)
-	ToGQL(in *v1.Namespace) (*gqlschema.Namespace, error)
+	Subscribe(listener resource.Listener)
+	Unsubscribe(listener resource.Listener)
 }
 
 type namespaceResolver struct {
 	namespaceSvc       namespaceSvc
 	appRetriever       shared.ApplicationRetriever
-	namespaceConverter gqlNamespaceConverter
+	namespaceConverter namespaceConverter
+	systemNamespaces   []string
 }
 
-func newNamespaceResolver(namespaceSvc namespaceSvc, appRetriever shared.ApplicationRetriever) *namespaceResolver {
+func newNamespaceResolver(namespaceSvc namespaceSvc, appRetriever shared.ApplicationRetriever, systemNamespaces []string) *namespaceResolver {
 	return &namespaceResolver{
 		namespaceSvc:       namespaceSvc,
 		appRetriever:       appRetriever,
-		namespaceConverter: &namespaceConverter{},
+		namespaceConverter: *newNamespaceConverter(systemNamespaces),
+		systemNamespaces:   systemNamespaces,
 	}
 }
 
-// TODO: Split this query into two
-func (r *namespaceResolver) NamespacesQuery(ctx context.Context, applicationName *string) ([]gqlschema.Namespace, error) {
-	var err error
-
-	var namespaces []*v1.Namespace
-	if applicationName == nil {
-		namespaces, err = r.namespaceSvc.List()
-	} else {
-
-		// TODO: Investigate if we still need the query for namespaces bound to an application
-		var namespaceNames []string
-		namespaceNames, err = r.appRetriever.Application().ListNamespacesFor(*applicationName)
-
-		//TODO: Refactor 'ListNamespacesFor' to return []v1.Namespace and remove this workaround
-		for _, nsName := range namespaceNames {
-			namespaces = append(namespaces, &v1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: nsName,
-				},
-			})
-		}
-	}
+func (r *namespaceResolver) NamespacesQuery(ctx context.Context, withSystemNamespaces *bool, withInactiveStatus *bool) ([]gqlschema.Namespace, error) {
+	namespaces, err := r.namespaceSvc.List()
 
 	if err != nil {
 		if module.IsDisabledModuleError(err) {
@@ -75,11 +54,15 @@ func (r *namespaceResolver) NamespacesQuery(ctx context.Context, applicationName
 		glog.Error(errors.Wrapf(err, "while listing %s", pretty.Namespaces))
 		return nil, gqlerror.New(err, pretty.Namespaces)
 	}
-	converted, err := r.namespaceConverter.ToGQLs(namespaces)
-	if err != nil {
-		glog.Error(errors.Wrapf(err, "while converting %s", pretty.Namespaces))
-		return nil, gqlerror.New(err, pretty.Namespaces)
+
+	var filteredNamespaces []*v1.Namespace
+	for _, ns := range namespaces {
+		if r.checkNamespace(ns, withSystemNamespaces, withInactiveStatus) {
+			filteredNamespaces = append(filteredNamespaces, ns)
+		}
 	}
+
+	converted := r.namespaceConverter.ToGQLs(filteredNamespaces)
 
 	return converted, nil
 }
@@ -113,12 +96,7 @@ func (r *namespaceResolver) NamespaceQuery(ctx context.Context, name string) (*g
 		return nil, gqlerror.New(err, pretty.Namespace, gqlerror.WithName(name))
 	}
 
-	converted, err := r.namespaceConverter.ToGQL(namespace)
-
-	if err != nil {
-		glog.Error(errors.Wrapf(err, "while converting %s", pretty.Namespace))
-		return nil, gqlerror.New(err, pretty.Namespace, gqlerror.WithName(name))
-	}
+	converted := r.namespaceConverter.ToGQL(namespace)
 
 	return converted, nil
 }
@@ -157,19 +135,34 @@ func (r *namespaceResolver) DeleteNamespace(ctx context.Context, name string) (*
 	}
 
 	namespaceCopy := namespace.DeepCopy()
-	deletedNamespace, err := r.namespaceConverter.ToGQL(namespaceCopy)
-	if err != nil {
-		glog.Error(errors.Wrapf(err, "while converting %s", pretty.Namespace))
-		return nil, gqlerror.New(err, pretty.Namespace, gqlerror.WithName(name))
-	}
+	deletedNamespace := r.namespaceConverter.ToGQL(namespaceCopy)
 
 	err = r.namespaceSvc.Delete(name)
 	if err != nil {
-		glog.Error(errors.Wrapf(err, "while creating %s `%s`", pretty.Namespace, name))
+		glog.Error(errors.Wrapf(err, "while deleting %s `%s`", pretty.Namespace, name))
 		return nil, gqlerror.New(err, pretty.Namespace, gqlerror.WithName(name))
 	}
 
 	return deletedNamespace, nil
+}
+
+func (r *namespaceResolver) NamespaceEventSubscription(ctx context.Context, withSystemNamespaces *bool) (<-chan gqlschema.NamespaceEvent, error) {
+	namespaceChannel := make(chan gqlschema.NamespaceEvent, 1)
+	filter := func(namespace *v1.Namespace) bool {
+		newBool := true
+		return namespace != nil && r.checkNamespace(namespace, withSystemNamespaces, &newBool)
+	}
+	namespaceListener := listener.NewNamespace(namespaceChannel, filter, &r.namespaceConverter, r.systemNamespaces)
+
+	r.namespaceSvc.Subscribe(namespaceListener)
+
+	go func() {
+		defer close(namespaceChannel)
+		defer r.namespaceSvc.Unsubscribe(namespaceListener)
+		<-ctx.Done()
+	}()
+
+	return namespaceChannel, nil
 }
 
 func (r *namespaceResolver) populateLabels(givenLabels *gqlschema.Labels) map[string]string {
@@ -180,4 +173,11 @@ func (r *namespaceResolver) populateLabels(givenLabels *gqlschema.Labels) map[st
 		}
 	}
 	return labels
+}
+
+func (r *namespaceResolver) checkNamespace(ns *v1.Namespace, withSystemNamespaces *bool, withInactiveStatus *bool) bool {
+	isSystem := isSystemNamespace(*ns, r.systemNamespaces)
+	passedSystemNamespaceCheck := !isSystem || (withSystemNamespaces != nil && *withSystemNamespaces && isSystem)
+	passedStatusCheck := ns.Status.Phase == "Active" || (withInactiveStatus != nil && *withInactiveStatus)
+	return passedSystemNamespaceCheck && passedStatusCheck
 }
