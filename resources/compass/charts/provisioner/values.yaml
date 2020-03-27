@@ -14,9 +14,16 @@ gardener:
   kubeconfigPath: "/gardener/kubeconfig/kubeconfig"
   kubeconfig: "" # Base64 encoded Gardener SA key
   secretName: "gardener-credentials"
+  auditLogsPolicyConfigMap: ""
   manageSecrets: true
 
 provisioner: "gardener"
+
+kymaRelease:
+  preReleases:
+    enabled: true
+  onDemand:
+    enabled: true
 
 installation:
   timeout: 50m
