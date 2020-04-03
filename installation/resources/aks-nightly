@@ -1,0 +1,180 @@
+apiVersion: prow.k8s.io/v1
+kind: ProwJob
+metadata:
+  annotations:
+    prow.k8s.io/job: kyma-aks-nightly
+  creationTimestamp: null
+  labels:
+    created-by-prow: "true"
+    preset-build-master: "true"
+    preset-cluster-use-ssd: "true"
+    preset-creds-aks-kyma-integration: "true"
+    preset-dind-enabled: "true"
+    preset-docker-push-repository-gke-integration: "true"
+    preset-gc-compute-envs: "true"
+    preset-gc-project-env: "true"
+    preset-kms-gc-project-env: "true"
+    preset-kyma-artifacts-bucket: "true"
+    preset-kyma-encryption-key: "true"
+    preset-kyma-guard-bot-github-token: "true"
+    preset-kyma-keyring: "true"
+    preset-nightly-aks-github-integration: "true"
+    preset-sa-gke-kyma-integration: "true"
+    preset-stability-checker-slack-notifications: "true"
+    prow.k8s.io/id: 3211153d-67e9-11ea-9e79-fe62eeeb7e4f
+    prow.k8s.io/job: kyma-aks-nightly
+    prow.k8s.io/type: periodic
+  name: 99c5cb74-67ea-11ea-888a-7e34a020031c
+spec:
+  agent: kubernetes
+  cluster: default
+  decoration_config:
+    gcs_configuration:
+      bucket: upgrade-prow-logs
+      path_strategy: explicit
+    gcs_credentials_secret: upgrade-sa-gcs-plank
+    grace_period: 600000000000
+    timeout: 7200000000000
+    utility_images:
+      clonerefs: eu.gcr.io/kyma-project/test-infra/clonerefs:v20200109-0db9d13b
+      entrypoint: gcr.io/k8s-prow/entrypoint:v20190312-abfe0e0
+      initupload: gcr.io/k8s-prow/initupload:v20190312-abfe0e0
+      sidecar: gcr.io/k8s-prow/sidecar:v20190312-abfe0e0
+  extra_refs:
+  - base_ref: master
+    org: kyma-test-infra-dev
+    path_alias: github.com/kyma-project/test-infra
+    repo: test-infra
+  - base_ref: master
+    org: kyma-test-infra-dev
+    path_alias: github.com/kyma-project/kyma
+    repo: kyma
+  job: kyma-aks-nightly
+  namespace: default
+  pod_spec:
+    containers:
+    - args:
+      - -c
+      - ${KYMA_PROJECT_DIR}/test-infra/prow/scripts/cluster-integration/kyma-aks-long-lasting.sh
+      command:
+      - bash
+      env:
+      - name: CLUSTER_VERSION
+        value: "1.15"
+      - name: RS_GROUP
+        value: kyma-nightly-aks
+      - name: REGION
+        value: northeurope
+      - name: INPUT_CLUSTER_NAME
+        value: nightly-aks
+      - name: TEST_RESULT_WINDOW_TIME
+        value: 6h
+      - name: STABILITY_SLACK_CLIENT_CHANNEL_ID
+        value: '#c4core-kyma-ci-force'
+      - name: GITHUB_TEAMS_WITH_KYMA_ADMINS_RIGHTS
+        value: cluster-access
+      - name: KYMA_ALERTS_SLACK_API_URL
+        valueFrom:
+          secretKeyRef:
+            key: secret
+            name: kyma-alerts-slack-api-url
+      - name: KYMA_ALERTS_CHANNEL
+        value: '#c4core-kyma-ci-force'
+      - name: CLOUDSDK_COMPUTE_REGION
+        value: europe-west4
+      - name: CLOUDSDK_CORE_PROJECT
+        value: sap-kyma-neighbors-dev
+      - name: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/credentials/upgrade-sa-gke-kyma-integratio/service-account.json
+      - name: CLOUDSDK_DNS_ZONE_NAME
+        value: prow-dev
+      - name: KYMA_PROJECT_DIR
+        value: /home/prow/go/src/github.com/kyma-test-infra-dev
+      - name: AZURE_SUBSCRIPTION_ID
+        valueFrom:
+          secretKeyRef:
+            key: subscription-id
+            name: kyma-azure-credential-id
+      - name: AZURE_SUBSCRIPTION_APP_ID
+        valueFrom:
+          secretKeyRef:
+            key: subscription-app-id
+            name: kyma-azure-credential-app-id
+      - name: AZURE_SUBSCRIPTION_SECRET
+        valueFrom:
+          secretKeyRef:
+            key: subscription-secret
+            name: kyma-azure-credential-secret
+      - name: AZURE_SUBSCRIPTION_TENANT
+        valueFrom:
+          secretKeyRef:
+            key: subscription-tenant
+            name: kyma-azure-credential-tenant
+      - name: DOCKER_IN_DOCKER_ENABLED
+        value: "true"
+      - name: DOCKER_PUSH_REPOSITORY
+        value: eu.gcr.io/sap-kyma-prow
+      - name: BUILD_TYPE
+        value: master
+      - name: DOCKER_PUSH_DIRECTORY
+        value: /develop
+      - name: BOT_GITHUB_TOKEN
+        valueFrom:
+          secretKeyRef:
+            key: token
+            name: neighbors-dev-job-guard-bot
+      - name: KYMA_ARTIFACTS_BUCKET
+        value: gs://upgrade-prow-artifacts
+      - name: SLACK_CLIENT_WEBHOOK_URL
+        value: https://sap-cx.slack.com/services/hooks/jenkins-ci
+      - name: SLACK_CLIENT_TOKEN
+        valueFrom:
+          secretKeyRef:
+            key: token
+            name: slack-nightly-token
+      - name: GITHUB_INTEGRATION_APP_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            key: client-id
+            name: nightly-aks-github-integration-app-client-id
+      - name: GITHUB_INTEGRATION_APP_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            key: client-secret
+            name: nightly-aks-github-integration-app-client-secret
+      - name: KYMA_KEYRING
+        value: prow-dev-keyring
+      - name: KYMA_ENCRYPTION_KEY
+        value: prow-dev-key
+      - name: CLUSTER_USE_SSD
+        value: "true"
+      image: eu.gcr.io/kyma-project/test-infra/kyma-cluster-infra:v20200206-22eb97a4
+      name: ""
+      resources:
+        requests:
+          cpu: 80m
+          memory: 200Mi
+      securityContext:
+        privileged: true
+      volumeMounts:
+      - mountPath: /etc/credentials/sa-stability-fluentd-storage-writer
+        name: upgrade-sa-stability-fluentd-s
+        readOnly: true
+      - mountPath: /etc/credentials/upgrade-sa-gke-kyma-integratio
+        name: upgrade-sa-gke-kyma-integratio
+        readOnly: true
+      - mountPath: /docker-graph
+        name: docker-graph
+    volumes:
+    - name: sa-stability-fluentd-storage-writer
+      secret:
+        secretName: sa-stability-fluentd-storage-writer
+    - name: upgrade-sa-gke-kyma-integratio
+      secret:
+        secretName: upgrade-sa-gke-kyma-integratio
+    - emptyDir: {}
+      name: docker-graph
+  type: periodic
+status:
+  startTime: "2020-03-17T00:57:36Z"
+  state: triggered
